@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智能员工服务与人力运营 Agent 建设方案 v0.1</title>
+  <style>
+    :root {
+      --primary: #2454d6;
+      --primary-dark: #173a9a;
+      --secondary: #17a2b8;
+      --accent: #7c3aed;
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --success: #16a34a;
+      --warning: #d97706;
+      --danger: #dc2626;
+      --code-bg: #111827;
+      --code-text: #e5e7eb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.7;
+    }
+
+    a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 72px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 56px 48px;
+      border-radius: 28px;
+      color: #fff;
+      background: linear-gradient(135deg, #163c98 0%, #2454d6 45%, #7c3aed 100%);
+      box-shadow: 0 24px 60px rgba(36, 84, 214, 0.28);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 360px;
+      height: 360px;
+      right: -120px;
+      top: -140px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .hero .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      font-size: 14px;
+      backdrop-filter: blur(8px);
+    }
+
+    .hero h1 {
+      margin: 24px 0 14px;
+      font-size: 42px;
+      line-height: 1.18;
+      letter-spacing: -0.02em;
+    }
+
+    .hero p {
+      max-width: 780px;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 18px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    .meta-item {
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .meta-item strong {
+      display: block;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.72);
+      font-weight: 500;
+    }
+
+    .meta-item span {
+      display: block;
+      margin-top: 4px;
+      font-weight: 700;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 24px;
+      margin-top: 28px;
+      align-items: start;
+    }
+
+    .toc {
+      position: sticky;
+      top: 18px;
+      padding: 22px;
+      border-radius: 22px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+
+    .toc ol {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .toc li {
+      margin: 8px 0;
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    section {
+      margin-bottom: 24px;
+      padding: 30px;
+      border-radius: 24px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      color: #111827;
+      font-size: 26px;
+      line-height: 1.3;
+    }
+
+    h3 {
+      margin: 24px 0 12px;
+      color: #111827;
+      font-size: 20px;
+    }
+
+    h4 {
+      margin: 18px 0 8px;
+      color: #111827;
+      font-size: 16px;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    ul, ol {
+      padding-left: 22px;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: #fbfdff;
+    }
+
+    .card h3, .card h4 {
+      margin-top: 0;
+    }
+
+    .tag-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: var(--primary-dark);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .note {
+      padding: 16px 18px;
+      border-radius: 16px;
+      border-left: 4px solid var(--primary);
+      background: #eff6ff;
+      color: #1e3a8a;
+    }
+
+    .warning {
+      border-left-color: var(--warning);
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      overflow: hidden;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: #111827;
+      background: #f3f4f6;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 18px;
+      border-radius: 16px;
+      color: var(--code-text);
+      background: var(--code-bg);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    code {
+      font-family: Consolas, Monaco, "Courier New", monospace;
+    }
+
+    .architecture {
+      padding: 18px;
+      border-radius: 20px;
+      background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid var(--border);
+    }
+
+    .arch-layer {
+      margin: 12px 0;
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid #dbeafe;
+      background: #eff6ff;
+      text-align: center;
+      font-weight: 700;
+      color: #1e3a8a;
+    }
+
+    .arch-layer small {
+      display: block;
+      margin-top: 6px;
+      font-weight: 500;
+      color: #475569;
+    }
+
+    .arch-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+
+    .arch-box {
+      min-height: 86px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid #ddd6fe;
+      background: #f5f3ff;
+      text-align: center;
+      color: #4c1d95;
+      font-weight: 700;
+    }
+
+    .arch-box small {
+      margin-top: 6px;
+      color: #6b7280;
+      font-weight: 500;
+    }
+
+    .arrow {
+      text-align: center;
+      color: var(--muted);
+      font-weight: 800;
+      letter-spacing: 2px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 16px;
+    }
+
+    .phase {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: #fcfcfd;
+    }
+
+    .phase strong {
+      color: var(--primary-dark);
+    }
+
+    .footer {
+      margin-top: 28px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 13px;
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .page {
+        max-width: none;
+        padding: 0;
+      }
+
+      .hero, section, .toc {
+        box-shadow: none;
+      }
+
+      .layout {
+        display: block;
+      }
+
+      .toc {
+        position: static;
+        margin-bottom: 20px;
+      }
+
+      a {
+        color: inherit;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .layout, .meta, .grid, .grid-3, .arch-row {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: static;
+      }
+
+      .hero {
+        padding: 36px 26px;
+      }
+
+      .hero h1 {
+        font-size: 32px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="badge">方案初版 · v0.1</div>
+      <h1>智能员工服务与人力运营 Agent<br />Workforce Operations Agent 建设方案</h1>
+      <p>
+        面向员工日常 HR 与企业内部服务场景，构建能够理解自然语言、融合企业政策与员工上下文、调用业务系统并推动流程执行的智能运营 Agent。
+      </p>
+      <div class="meta">
+        <div class="meta-item"><strong>版本</strong><span>v0.1</span></div>
+        <div class="meta-item"><strong>文档类型</strong><span>方案初版</span></div>
+        <div class="meta-item"><strong>适用对象</strong><span>HR / IT / 运营 / 管理者</span></div>
+        <div class="meta-item"><strong>核心技术</strong><span>Agentic Workflow + RAG + Tool Calling</span></div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="toc">
+        <h2>目录</h2>
+        <ol>
+          <li><a href="#goal">建设目标</a></li>
+          <li><a href="#positioning">核心定位</a></li>
+          <li><a href="#scenarios">典型业务场景</a></li>
+          <li><a href="#architecture">总体架构</a></li>
+          <li><a href="#modules">核心模块</a></li>
+          <li><a href="#workflow">工作流示例</a></li>
+          <li><a href="#security">安全与治理</a></li>
+          <li><a href="#roadmap">实施路线图</a></li>
+          <li><a href="#metrics">衡量指标</a></li>
+          <li><a href="#summary">方案总结</a></li>
+        </ol>
+      </aside>
+
+      <main>
+        <section id="goal">
+          <h2>一、建设目标</h2>
+          <p class="lead">
+            构建面向员工日常 HR 和企业内部服务场景的智能运营 Agent，使员工能够通过自然语言完成休假、调动、差旅、员工政策咨询、审批准备和 HR Service Request 等任务。
+          </p>
+          <div class="grid">
+            <div class="card">
+              <h3>员工侧目标</h3>
+              <ul>
+                <li>通过自然语言快速完成 HR 与内部服务任务。</li>
+                <li>获得结合个人情况的政策解释与流程建议。</li>
+                <li>减少查找制度、填写表单、追踪审批的时间成本。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>组织侧目标</h3>
+              <ul>
+                <li>降低 HR 与运营团队重复咨询和工单处理压力。</li>
+                <li>提升政策执行一致性、流程合规性与审批材料质量。</li>
+                <li>形成员工服务统一入口与运营数据闭环。</li>
+              </ul>
+            </div>
+          </div>
+          <div class="tag-list">
+            <span class="tag">Agentic Workflow</span>
+            <span class="tag">企业知识与用户上下文融合</span>
+            <span class="tag">Memory</span>
+            <span class="tag">Policy Grounding</span>
+            <span class="tag">Tool Calling</span>
+            <span class="tag">流程自动化</span>
+            <span class="tag">Human-in-the-Loop Approval</span>
+          </div>
+        </section>
+
+        <section id="positioning">
+          <h2>二、核心定位</h2>
+          <p>
+            与传统 HR Chatbot 不同，Workforce Operations Agent 不仅回答问题，还能够结合员工信息、企业政策和业务上下文，自主规划并推动相关流程执行。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>能力维度</th>
+                <th>传统 HR Chatbot</th>
+                <th>Workforce Operations Agent</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>交互方式</td><td>问答式</td><td>任务驱动式，多轮澄清与确认</td></tr>
+              <tr><td>信息来源</td><td>静态 FAQ 或知识库</td><td>知识库 + 员工上下文 + 流程状态 + 业务系统</td></tr>
+              <tr><td>执行动作</td><td>通常提供链接或说明</td><td>可调用 HRIS、OA、审批、差旅、工单等系统</td></tr>
+              <tr><td>流程能力</td><td>简单指引</td><td>规划、拆解、校验、提交、追踪和提醒</td></tr>
+              <tr><td>风险控制</td><td>较弱</td><td>权限边界、政策校验、人工审批、审计追踪</td></tr>
+              <tr><td>个性化</td><td>较弱</td><td>基于员工身份、岗位、地区、合同类型个性化响应</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="scenarios">
+          <h2>三、典型业务场景</h2>
+          <div class="grid">
+            <div class="card">
+              <h3>1. 休假服务</h3>
+              <p>员工可发起休假咨询与申请，例如“我下周想请 3 天年假，可以帮我看看是否符合政策并发起申请吗？”</p>
+              <ol>
+                <li>识别休假申请意图。</li>
+                <li>获取员工地区、合同类型、入职时间、假期余额等上下文。</li>
+                <li>检索年假政策并校验申请条件。</li>
+                <li>生成申请摘要，请员工确认。</li>
+                <li>调用休假系统创建申请并提交审批。</li>
+              </ol>
+            </div>
+            <div class="card">
+              <h3>2. 差旅申请</h3>
+              <p>员工可要求 Agent 准备差旅申请、检查差旅标准、生成审批材料。</p>
+              <ul>
+                <li>收集出行日期、目的地、预算、客户名称、业务目的等信息。</li>
+                <li>检索住宿、交通、餐补等差旅政策。</li>
+                <li>判断是否超标，必要时进入例外审批。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>3. HR 政策咨询</h3>
+              <p>结合员工所在地区、员工类型、入职时间、福利资格等上下文，返回个性化政策解释。</p>
+              <p class="note">政策类回答必须标明依据、适用范围、生效日期和限制条件。</p>
+            </div>
+            <div class="card">
+              <h3>4. 员工调动 / 转岗</h3>
+              <p>为 HRBP 或经理准备内部调动流程，检查权限、组织关系、审批矩阵、岗位变化和合规要求。</p>
+              <p class="warning note">涉及薪酬、合同、组织变更等高风险事项，必须引入 Human-in-the-Loop 审核。</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="architecture">
+          <h2>四、总体架构设计</h2>
+          <p class="lead">总体架构由员工交互入口、Agent 编排、知识与上下文、工具与流程、企业系统以及安全治理层组成。</p>
+          <div class="architecture" aria-label="智能员工服务与人力运营 Agent 总体架构图">
+            <div class="arch-layer">
+              员工交互入口层
+              <small>Teams / Slack / 企业微信 / 飞书 / Web Portal / Mobile App / HR Service Desk</small>
+            </div>
+            <div class="arrow">↓</div>
+            <div class="arch-layer">
+              API Gateway
+              <small>认证 / 限流 / 日志 / 请求路由 / 安全过滤</small>
+            </div>
+            <div class="arrow">↓</div>
+            <div class="arch-layer">
+              Agent Orchestration 层
+              <small>意图识别 / 任务规划 / 多步骤执行 / 状态管理 / ReAct / Plan-and-Execute / Tool Calling</small>
+            </div>
+            <div class="arch-row">
+              <div class="arch-box">知识检索层<small>RAG / Policy Grounding / ACL 过滤</small></div>
+              <div class="arch-box">用户上下文层<small>Employee Profile / Org Chart / 权限 / 流程状态</small></div>
+              <div class="arch-box">工具调用层<small>HRIS / BPM / ITSM / 差旅 / 财务 / 通知</small></div>
+            </div>
+            <div class="arrow">↓</div>
+            <div class="arch-layer">
+              企业数据与业务系统集成层
+              <small>Workday / SAP SuccessFactors / Oracle HCM / OA / ServiceNow / Concur / Finance / DMS</small>
+            </div>
+            <div class="arrow">↓</div>
+            <div class="arch-layer">
+              安全、合规与治理层
+              <small>IAM / RBAC + ABAC / 审计 / 脱敏 / HITL / 风险策略 / 监控告警</small>
+            </div>
+          </div>
+        </section>
+
+        <section id="modules">
+          <h2>五、核心模块设计</h2>
+
+          <h3>1. 员工交互入口层</h3>
+          <p>支持多渠道接入与一致化用户体验，处理身份识别、多轮对话、消息上下文保留、文件上传解析、审批通知与状态提醒。</p>
+          <div class="tag-list">
+            <span class="tag">Microsoft Teams</span>
+            <span class="tag">Slack</span>
+            <span class="tag">企业微信</span>
+            <span class="tag">飞书</span>
+            <span class="tag">Web Portal</span>
+            <span class="tag">Mobile App</span>
+          </div>
+
+          <h3>2. Agent Orchestration 层</h3>
+          <p>系统核心，负责“理解、规划、执行、纠错”。</p>
+          <div class="grid-3">
+            <div class="card"><h4>意图识别</h4><p>识别政策咨询、休假申请、差旅申请、信息变更、调动流程、证明开具、工单查询、审批准备等意图。</p></div>
+            <div class="card"><h4>任务规划</h4><p>将复杂目标拆分为身份校验、上下文获取、政策检索、流程校验、草稿生成、确认和提交等步骤。</p></div>
+            <div class="card"><h4>Tool Router</h4><p>根据任务步骤选择可用工具，并在调用前执行参数校验、权限校验和风险评估。</p></div>
+            <div class="card"><h4>Memory Manager</h4><p>管理会话短期记忆、任务记忆和低敏偏好记忆，支持中断恢复和流程追踪。</p></div>
+            <div class="card"><h4>Policy Guard</h4><p>确保政策回答基于检索结果，避免无依据生成，并对不确定内容提示人工确认。</p></div>
+            <div class="card"><h4>HITL Engine</h4><p>在高风险、低置信度、越权边缘或政策例外场景中引入员工、经理、HRBP、法务或财务审批。</p></div>
+          </div>
+
+          <h3>3. 企业知识与 Policy Grounding 层</h3>
+          <p>知识来源包括员工手册、HR 政策、差旅政策、薪酬福利制度、地区劳动法规说明、流程规范、FAQ、审批矩阵、历史 HR 工单知识等。</p>
+          <pre><code>用户问题
+  ↓
+查询重写 Query Rewrite
+  ↓
+权限过滤
+  ↓
+向量检索 + 关键词检索
+  ↓
+政策片段召回
+  ↓
+基于政策生成回答
+  ↓
+返回引用来源和适用条件</code></pre>
+
+          <h3>4. 用户上下文融合层</h3>
+          <table>
+            <thead>
+              <tr><th>类型</th><th>示例</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>基础信息</td><td>员工 ID、姓名、岗位、部门</td></tr>
+              <tr><td>雇佣信息</td><td>入职日期、合同类型、员工类型</td></tr>
+              <tr><td>组织信息</td><td>汇报经理、成本中心、所在地</td></tr>
+              <tr><td>权限信息</td><td>是否 HR、是否经理、是否审批人</td></tr>
+              <tr><td>福利信息</td><td>假期余额、福利资格</td></tr>
+              <tr><td>流程状态</td><td>当前审批、历史工单、待补充事项</td></tr>
+            </tbody>
+          </table>
+
+          <h3>5. 工具调用清单</h3>
+          <table>
+            <thead>
+              <tr><th>工具</th><th>功能</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Employee Profile API</td><td>查询员工基础信息、岗位、部门、地区等</td></tr>
+              <tr><td>Leave Balance API</td><td>查询休假余额与假期可用情况</td></tr>
+              <tr><td>Leave Request API</td><td>创建休假申请、查询休假申请状态</td></tr>
+              <tr><td>Travel Request API</td><td>创建差旅申请、检查预算和差旅标准</td></tr>
+              <tr><td>Policy Search Tool</td><td>检索企业政策、流程规范和 FAQ</td></tr>
+              <tr><td>Approval Workflow API</td><td>发起审批、查询审批状态、催办审批</td></tr>
+              <tr><td>HR Ticket API</td><td>创建、分类、查询和更新 HR 工单</td></tr>
+              <tr><td>Org Chart API</td><td>查询组织关系、汇报链、成本中心</td></tr>
+              <tr><td>Calendar API</td><td>检查日程冲突、团队关键日期或排班</td></tr>
+              <tr><td>Notification API</td><td>发送确认、审批、补充材料和状态提醒</td></tr>
+              <tr><td>Document Generation Tool</td><td>生成申请材料、证明、审批说明和摘要</td></tr>
+            </tbody>
+          </table>
+
+          <h3>6. Memory 设计</h3>
+          <div class="grid">
+            <div class="card"><h4>短期记忆</h4><p>当前会话中的申请类型、日期、已补充信息、待确认事项。</p></div>
+            <div class="card"><h4>任务记忆</h4><p>跨会话继续流程，如未提交差旅申请、待补充材料工单。</p></div>
+            <div class="card"><h4>长期偏好记忆</h4><p>仅保存低敏偏好，如常用语言、默认办公地、常用出发城市。</p></div>
+            <div class="card"><h4>不可长期记忆</h4><p>健康信息、家庭成员隐私、薪资细节、证件信息、医疗证明、敏感绩效信息。</p></div>
+          </div>
+        </section>
+
+        <section id="workflow">
+          <h2>六、Agent 工作流示例：员工申请年假</h2>
+          <p><strong>用户输入：</strong>“我想 10 月 8 日到 10 月 10 日请年假，帮我申请。”</p>
+          <pre><code>1. 识别意图：annual_leave_request
+2. 获取员工身份：employee_id
+3. 查询员工信息：地区、合同类型、入职时间、经理
+4. 查询假期余额
+5. 检索年假政策
+6. 校验日期和余额
+7. 检查是否需要提前申请
+8. 生成申请草稿
+9. 展示给员工确认
+10. 员工确认后调用 Leave API
+11. 创建审批流
+12. 返回申请编号</code></pre>
+          <h3>Agent 回复示例</h3>
+          <div class="note">
+            我已检查你的年假余额和公司年假政策。你当前剩余年假为 7 天，计划申请 2026 年 10 月 8 日至 10 月 10 日，共 3 个工作日，符合《员工年假管理办法》的申请条件。<br /><br />
+            申请摘要如下：<br />
+            - 假期类型：年假<br />
+            - 日期：2026-10-08 至 2026-10-10<br />
+            - 天数：3 天<br />
+            - 审批人：你的直属经理王经理<br /><br />
+            请确认是否提交该申请？
+          </div>
+          <h3>任务状态模型</h3>
+          <pre><code>{
+  "task_id": "leave-request-20260917-001",
+  "employee_id": "E10293",
+  "intent": "annual_leave_request",
+  "status": "waiting_for_user_confirmation",
+  "steps_completed": [
+    "identity_verified",
+    "leave_balance_checked",
+    "policy_validated",
+    "draft_generated"
+  ],
+  "pending_action": "user_confirm"
+}</code></pre>
+        </section>
+
+        <section id="security">
+          <h2>七、安全、权限与治理</h2>
+
+          <h3>1. Human-in-the-Loop Approval</h3>
+          <table>
+            <thead>
+              <tr><th>场景</th><th>处理方式</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>政策不明确</td><td>转 HR 专员确认</td></tr>
+              <tr><td>信息不完整</td><td>请求员工补充</td></tr>
+              <tr><td>超出政策标准</td><td>进入例外审批</td></tr>
+              <tr><td>涉及薪酬或合同</td><td>HRBP 或经理审核</td></tr>
+              <tr><td>涉及敏感个人信息</td><td>加强身份和权限校验</td></tr>
+              <tr><td>高影响组织变更</td><td>多级审批</td></tr>
+              <tr><td>Agent 置信度低</td><td>人工复核后再执行</td></tr>
+            </tbody>
+          </table>
+          <pre><code>Agent 生成申请/建议
+  ↓
+员工确认
+  ↓
+系统校验风险等级
+  ├─ 低风险：自动提交审批流
+  ├─ 中风险：经理审批
+  └─ 高风险：HRBP / 法务 / 财务复核</code></pre>
+
+          <h3>2. 身份认证与权限控制</h3>
+          <p>集成企业 IAM，支持 SSO、OAuth 2.0 / OpenID Connect、企业 AD / Entra ID、多因素认证 MFA。</p>
+          <div class="grid">
+            <div class="card">
+              <h4>RBAC：基于角色</h4>
+              <ul>
+                <li>普通员工</li>
+                <li>直属经理</li>
+                <li>HR 专员</li>
+                <li>HRBP</li>
+                <li>财务审批人</li>
+                <li>系统管理员</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>ABAC：基于属性</h4>
+              <ul>
+                <li>所属国家 / 地区</li>
+                <li>部门与成本中心</li>
+                <li>员工类型</li>
+                <li>汇报关系</li>
+                <li>数据敏感级别</li>
+                <li>操作类型与审批链关系</li>
+              </ul>
+            </div>
+          </div>
+
+          <h3>3. Guardrails</h3>
+          <div class="grid-3">
+            <div class="card">
+              <h4>输入侧防护</h4>
+              <ul>
+                <li>Prompt Injection 检测</li>
+                <li>越权查询检测</li>
+                <li>敏感信息识别</li>
+                <li>上传文档安全扫描</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>推理侧防护</h4>
+              <ul>
+                <li>政策回答必须基于检索结果</li>
+                <li>工具调用前参数校验</li>
+                <li>高风险任务人工确认</li>
+                <li>权限判断前置</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>输出侧防护</h4>
+              <ul>
+                <li>避免暴露无权限数据</li>
+                <li>敏感字段脱敏</li>
+                <li>标注政策依据</li>
+                <li>明确不确定边界</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="roadmap">
+          <h2>八、实施路线图</h2>
+          <div class="timeline">
+            <div class="phase">
+              <h3>阶段一：MVP（建议 6-10 周）</h3>
+              <p><strong>目标：</strong>覆盖高频低风险场景。</p>
+              <ul>
+                <li>HR 政策问答</li>
+                <li>年假余额查询</li>
+                <li>休假申请草稿生成</li>
+                <li>HR 工单创建</li>
+                <li>审批状态查询</li>
+              </ul>
+              <p><strong>能力：</strong>基础 RAG、员工身份认证、员工上下文读取、工具调用、员工确认后提交申请。</p>
+            </div>
+            <div class="phase">
+              <h3>阶段二：流程型 Agent（建议 8-12 周）</h3>
+              <p><strong>目标：</strong>从问答升级到流程推进。</p>
+              <ul>
+                <li>差旅申请</li>
+                <li>证明开具</li>
+                <li>员工信息变更</li>
+                <li>入职服务与离职服务</li>
+                <li>转岗 / 调动流程准备</li>
+              </ul>
+              <p><strong>能力：</strong>多步骤任务规划、流程状态记忆、HITL、审批材料自动生成、异常补充信息收集。</p>
+            </div>
+            <div class="phase">
+              <h3>阶段三：智能运营优化（持续迭代）</h3>
+              <p><strong>目标：</strong>形成主动式 HR 运营能力。</p>
+              <ul>
+                <li>假期即将过期主动提醒</li>
+                <li>新员工入职任务跟进</li>
+                <li>审批超时提醒</li>
+                <li>HR 工单自动分类和分派</li>
+                <li>高频问题洞察与员工服务体验分析</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="metrics">
+          <h2>九、衡量指标</h2>
+          <div class="grid-3">
+            <div class="card">
+              <h3>员工体验指标</h3>
+              <ul>
+                <li>首次响应时间</li>
+                <li>任务完成时间</li>
+                <li>员工满意度</li>
+                <li>自助解决率</li>
+                <li>多轮对话完成率</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>运营效率指标</h3>
+              <ul>
+                <li>HR 工单减少比例</li>
+                <li>人均服务成本降低</li>
+                <li>自动化流程提交比例</li>
+                <li>审批材料一次通过率</li>
+                <li>HR 专员处理时长降低</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h3>质量与安全指标</h3>
+              <ul>
+                <li>政策回答准确率</li>
+                <li>工具调用成功率</li>
+                <li>越权访问拦截率</li>
+                <li>人工介入率</li>
+                <li>审计覆盖率</li>
+                <li>幻觉率或无依据回答率</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="summary">
+          <h2>十、推荐优先建设能力与总结</h2>
+          <h3>优先建设能力</h3>
+          <ol>
+            <li><strong>企业政策 RAG 问答：</strong>覆盖员工手册、休假政策、差旅政策、福利政策。</li>
+            <li><strong>员工上下文服务：</strong>对接 HRIS，读取员工基本信息、组织关系、休假余额。</li>
+            <li><strong>休假申请 Agent：</strong>作为第一个端到端流程型场景，复杂度适中、价值明显。</li>
+            <li><strong>HR Service Request Agent：</strong>支持创建、分类、查询 HR 工单。</li>
+            <li><strong>审批前检查能力：</strong>自动检查材料完整性、政策符合性和审批路径。</li>
+            <li><strong>HITL 审批机制：</strong>对高风险事项引入人工确认和审批。</li>
+          </ol>
+          <div class="note">
+            Workforce Operations Agent 的核心不是简单 HR 问答，而是一个结合企业知识、员工上下文、流程自动化和权限治理的智能运营系统。它应能够理解员工自然语言需求、检索并引用企业政策、结合个人上下文给出个性化判断、拆解并推进流程、调用企业系统，并在关键节点请求员工确认或人工审批。
+          </div>
+        </section>
+
+        <div class="footer">
+          智能员工服务与人力运营 Agent 建设方案 · v0.1 · Workforce Operations Agent
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

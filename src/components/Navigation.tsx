@@ -7,13 +7,15 @@ interface NavigationProps {
 
 const navItems = [
   { id: 'overview', label: '概述', icon: 'fa-home' },
+  { id: 'scenarios', label: '业务场景', icon: 'fa-th-large' },
   { id: 'architecture', label: '系统架构', icon: 'fa-project-diagram' },
   { id: 'modules', label: '核心模块', icon: 'fa-cubes' },
-  { id: 'workflow', label: 'Agent 工作流', icon: 'fa-route' },
+  { id: 'workflow', label: '工作流', icon: 'fa-route' },
+  { id: 'context', label: '数据与Memory', icon: 'fa-database' },
   { id: 'techstack', label: '技术栈', icon: 'fa-layer-group' },
-  { id: 'dataflow', label: '数据流', icon: 'fa-exchange-alt' },
-  { id: 'security', label: '安全与权限', icon: 'fa-shield-alt' },
-  { id: 'roadmap', label: '实施路线', icon: 'fa-map-signs' },
+  { id: 'security', label: '安全权限', icon: 'fa-shield-alt' },
+  { id: 'roadmap', label: '路线图', icon: 'fa-map-signs' },
+  { id: 'metrics', label: '指标总结', icon: 'fa-chart-bar' },
 ];
 
 export default function Navigation({ activeSection, setActiveSection }: NavigationProps) {
@@ -21,9 +23,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 50);
-    };
+    const handleScroll = () => setIsScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
@@ -31,9 +31,7 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
   const scrollToSection = (id: string) => {
     setActiveSection(id);
     const element = document.getElementById(id);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (element) element.scrollIntoView({ behavior: 'smooth' });
     setMobileMenuOpen(false);
   };
 
@@ -48,10 +46,10 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             <span className="font-bold text-lg bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
               Workforce Agent
             </span>
+            <span className="hidden sm:inline text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full">v0.2</span>
           </div>
 
-          {/* Desktop Nav */}
-          <div className="hidden lg:flex items-center space-x-1">
+          <div className="hidden xl:flex items-center space-x-1">
             {navItems.map((item) => (
               <button
                 key={item.id}
@@ -68,9 +66,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
             ))}
           </div>
 
-          {/* Mobile menu button */}
           <button
-            className="lg:hidden p-2 rounded-lg text-slate-300 hover:bg-slate-700"
+            className="xl:hidden p-2 rounded-lg text-slate-300 hover:bg-slate-700"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
             <i className={`fas ${mobileMenuOpen ? 'fa-times' : 'fa-bars'}`}></i>
@@ -78,9 +75,8 @@ export default function Navigation({ activeSection, setActiveSection }: Navigati
         </div>
       </div>
 
-      {/* Mobile Menu */}
       {mobileMenuOpen && (
-        <div className="lg:hidden bg-slate-900/95 backdrop-blur-md border-t border-slate-700">
+        <div className="xl:hidden bg-slate-900/95 backdrop-blur-md border-t border-slate-700">
           <div className="px-4 py-3 space-y-1">
             {navItems.map((item) => (
               <button

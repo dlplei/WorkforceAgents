@@ -19,3 +19,5 @@ venv/
 env/
 ENV/
 *.egg-info/
+/backend/__pycache__
+/backend/agent/__pycache__

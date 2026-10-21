@@ -3,7 +3,7 @@ Workforce Operations Agent - FastAPI Backend
 """
 import json
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -65,6 +65,7 @@ async def shutdown_event():
 
 class ChatRequest(BaseModel):
     message: str
+    history: Optional[List[Dict[str, Any]]] = None
     config: Optional[LLMConfig] = None
 
 
@@ -159,6 +160,13 @@ async def chat(req: ChatRequest):
 
     # 创建 Agent 引擎
     engine = AgentEngine()
+    if req.history:
+        for item in req.history:
+            if isinstance(item, dict) and item.get("role") and item.get("content"):
+                engine.conversation_history.append({
+                    "role": item["role"],
+                    "content": item["content"],
+                })
 
     async def event_stream():
         try:

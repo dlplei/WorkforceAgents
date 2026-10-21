@@ -62,6 +62,9 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         },
         body: JSON.stringify({
           message: userMessage,
+          history: messages
+            .filter(m => m.content && m.content.trim().length > 0)
+            .map(m => ({ role: m.role, content: m.content })),
           config: {
             base_url: config.llmBaseUrl,  // LLM API 地址
             api_key: config.apiKey,

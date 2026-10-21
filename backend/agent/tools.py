@@ -243,8 +243,8 @@ registry.register(
     parameters={
         "type": "object",
         "properties": {
-            "start_date": {"type": "string", "description": "开始日期，格式 YYYY-MM-DD"},
-            "end_date": {"type": "string", "description": "结束日期，格式 YYYY-MM-DD"},
+            "start_date": {"type": "string", "description": "开始日期，格式 YYYY-MM-DD（基于当前系统年份推断）"},
+            "end_date": {"type": "string", "description": "结束日期，格式 YYYY-MM-DD（基于当前系统年份推断）"},
         },
         "required": ["start_date", "end_date"],
     },
@@ -280,8 +280,8 @@ registry.register(
         "type": "object",
         "properties": {
             "leave_type": {"type": "string", "description": "假期类型", "enum": ["annual", "sick", "personal"]},
-            "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
-            "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD"},
+            "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD（基于当前系统年份推断）"},
+            "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD（基于当前系统年份推断）"},
             "reason": {"type": "string", "description": "请假原因"},
         },
         "required": ["leave_type", "start_date", "end_date"],

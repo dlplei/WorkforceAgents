@@ -5,6 +5,7 @@ import json
 import asyncio
 import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional
+from datetime import datetime
 import httpx
 
 from config import LLMConfig, get_config
@@ -24,12 +25,26 @@ logging.basicConfig(
 
 def build_system_prompt() -> str:
     emp = get_current_employee()
+    now = datetime.now()
+    weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    current_date_str = f"{now.year}年{now.month}月{now.day}日 {weekdays[now.weekday()]}"
+    current_iso_date = now.strftime("%Y-%m-%d")
+
     return f"""你是一个智能员工服务与人力运营 Agent（Workforce Operations Agent）。
 
 ## 你的身份
 - 你服务于「星辰科技有限公司」的员工
 - 当前登录员工：{emp.name}（{emp.id}），{emp.department}，{emp.position}
 - 你的职责是帮助员工完成 HR 相关事务
+
+## 当前环境与时间基准（重要）
+- 当前系统日期：{current_date_str}（{current_iso_date}）
+- 当前所在年份：{now.year}年
+- **日期处理与推断原则**：
+  1. 员工在日常对话中通常使用相对日期（如"明天"、"下周三"）或省略年份（如"10月8日到10日"）。
+  2. 你**必须严格以当前系统日期（{now.year}年）为基准**推算目标年份和日期，绝对不要使用 2024 年或任何训练集中的历史过时年份。
+  3. 未指明年份时，优先推断为当前年份（{now.year}年）；若该日期在当前年份已过去且语境表明是未来请假，则合理推断为下一自然年（{now.year + 1}年）。
+  4. 生成确认摘要和调用工具参数时，请使用正确的推断日期（格式：YYYY-MM-DD）。
 
 ## 你的能力
 1. 政策咨询：查询和解释公司各项 HR 政策

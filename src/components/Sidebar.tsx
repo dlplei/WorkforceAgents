@@ -13,10 +13,14 @@ export default function Sidebar({ config }: Props) {
   useEffect(() => {
     const fetchTools = async () => {
       try {
+        console.log('Fetching tools from:', `${config.backendUrl}/api/tools`);
         const response = await fetch(`${config.backendUrl}/api/tools`);
         if (response.ok) {
           const data = await response.json();
+          console.log('Tools loaded:', data.length);
           setTools(data);
+        } else {
+          console.error('Failed to fetch tools, status:', response.status);
         }
       } catch (err) {
         console.error('Failed to fetch tools:', err);

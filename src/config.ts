@@ -3,8 +3,9 @@
 // ============================================================
 
 export interface AppConfig {
-  backendUrl: string;
-  apiKey: string;
+  backendUrl: string;    // 本地 FastAPI 后端地址
+  llmBaseUrl: string;    // LLM API 服务地址
+  apiKey: string;        // LLM API Key
   model: string;
   temperature: number;
   maxTokens: number;
@@ -12,6 +13,7 @@ export interface AppConfig {
 
 export const defaultConfig: AppConfig = {
   backendUrl: 'http://localhost:8000',
+  llmBaseUrl: 'https://api.openai.com/v1',
   apiKey: '',
   model: 'gpt-4o-mini',
   temperature: 0.7,

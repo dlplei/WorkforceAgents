@@ -2,6 +2,38 @@
 
 ## 常见错误及解决方案
 
+### 0.5. CORS 错误 / NetworkError（配置混淆）
+
+**症状：**
+```
+Cross-Origin Request Blocked: The Same Origin Policy disallows reading the remote resource at https://api.servicesessentials.ibm.com/v1/api/tools
+❌ 错误：NetworkError when attempting to fetch resource.
+```
+
+**原因：**
+前端把 **LLM API 地址** 填到了 **后端地址** 字段，导致前端直接访问 LLM API 而不是本地后端。
+
+**解决方案：**
+
+1. **打开前端设置面板**（点击右上角齿轮图标）
+
+2. **正确填写两个 URL：**
+   ```
+   后端地址 (Backend URL): http://localhost:8000
+   LLM API 地址 (LLM Base URL): https://api.servicesessentials.ibm.com/v1
+   ```
+
+3. **关键区别：**
+   - **后端地址** = 本地 FastAPI 服务（`http://localhost:8000`）
+   - **LLM API 地址** = 你的 LLM 服务（IBM/OpenAI 等）
+
+4. **保存配置并刷新页面**
+
+**验证方法：**
+- 打开浏览器开发者工具 → Network 标签
+- 应该看到请求发往 `http://localhost:8000/api/tools` 和 `http://localhost:8000/api/chat`
+- 而不是直接访问 LLM API 地址
+
 ### 0. 配置未加载 / API Key 未配置
 
 **症状：**

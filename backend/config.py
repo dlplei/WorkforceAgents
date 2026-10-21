@@ -7,9 +7,9 @@ from typing import Optional
 
 class LLMConfig(BaseModel):
     """LLM 配置"""
-    base_url: str = "https://api.openai.com/v1"
+    base_url: str = "https://api.servicesessentials.ibm.com/v1"
     api_key: str = ""
-    model: str = "gpt-4o-mini"
+    model: str = "gemini-3.7-flash"
     temperature: float = 0.7
     max_tokens: int = 2048
 

@@ -88,7 +88,7 @@ async def test_connection(base_url: str, api_key: str, model: str = "gpt-4o-mini
                     print("✅ 流式响应开始")
                     chunk_count = 0
                     async for line in response.aiter_lines():
-                        if line.startswith(" "):
+                        if line.startswith("data: "):
                             chunk_count += 1
                     print(f"✅ 接收到 {chunk_count} 个数据块")
                 else:

@@ -164,12 +164,12 @@ async def chat(req: ChatRequest):
         try:
             async for event in engine.run(req.message):
                 # 格式化为 SSE
-                yield f" {json.dumps(event, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.error(f"💥 聊天处理错误: {type(e).__name__}: {e}")
             logger.exception("完整异常堆栈:")
             error_event = {"type": "error", "content": str(e)}
-            yield f" {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_stream(),

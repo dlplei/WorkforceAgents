@@ -23,16 +23,12 @@ else:
 
 class LLMConfig(BaseModel):
     """LLM 配置"""
-    base_url: str = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
+    base_url: str = os.getenv("LLM_BASE_URL", "https://api.servicesessentials.ibm.com/v1")
     api_key: str = os.getenv("LLM_API_KEY", "")
-    model: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    model: str = os.getenv("LLM_MODEL", "gemini-3.7-flash")
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
-    base_url: str = "https://api.servicesessentials.ibm.com/v1"
-    api_key: str = ""
-    model: str = "gemini-3.7-flash"
-    temperature: float = 0.7
-    max_tokens: int = 2048
+
 
 
 # 全局配置（运行时由前端传入）

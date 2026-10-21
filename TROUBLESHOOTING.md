@@ -2,6 +2,49 @@
 
 ## 常见错误及解决方案
 
+### 0. 配置未加载 / API Key 未配置
+
+**症状：**
+```
+⚠️  未找到 .env 文件
+❌ 未配置 API Key
+```
+
+**解决方案：**
+
+1. **创建 .env 文件**
+   ```bash
+   cd backend
+   cp .env.example .env
+   ```
+
+2. **编辑 .env 文件**
+   ```bash
+   # 必填：你的 LLM API Key
+   LLM_API_KEY=sk-your-actual-api-key-here
+   
+   # 可选：修改其他配置
+   LLM_BASE_URL=https://api.openai.com/v1
+   LLM_MODEL=gpt-4o-mini
+   LLM_TEMPERATURE=0.7
+   LLM_MAX_TOKENS=2048
+   ```
+
+3. **测试配置加载**
+   ```bash
+   python test_config.py
+   ```
+
+4. **重启后端服务**
+   ```bash
+   python main.py
+   ```
+
+**注意：**
+- `.env` 文件不会被提交到 git（已在 .gitignore 中）
+- 前端配置会覆盖后端 .env 配置
+- 如果前端不填写配置，将使用后端 .env 中的默认值
+
 ### 1. LLM API 错误 (403): Connect failed
 
 **症状：**

@@ -52,7 +52,7 @@
 
 ## 快速开始
 
-### 1. 启动后端
+### 1. 配置后端
 
 ```bash
 cd backend
@@ -65,15 +65,36 @@ source venv/bin/activate  # Linux/Mac
 # 安装依赖
 pip install -r requirements.txt
 
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，填入你的 API Key 等配置
+```
+
+**重要：编辑 `.env` 文件**
+
+```bash
+# 必填：你的 LLM API Key
+LLM_API_KEY=sk-your-actual-api-key-here
+
+# 可选：修改 Base URL（如果使用非 OpenAI 的兼容服务）
+LLM_BASE_URL=https://api.openai.com/v1
+
+# 可选：修改模型
+LLM_MODEL=gpt-4o-mini
+```
+
+### 2. 启动后端
+
+```bash
 # 启动服务
 python main.py
 # 或
 uvicorn main:app --reload --port 8000
 ```
 
-后端将在 `http://localhost:8000` 启动。
+后端将在 `http://localhost:8000` 启动。启动时会显示配置信息日志。
 
-### 2. 启动前端
+### 3. 启动前端
 
 ```bash
 # 安装依赖
@@ -88,13 +109,15 @@ npm run build
 
 前端将在 `http://localhost:5173` 启动（开发模式）。
 
-### 3. 配置 API
+### 4. 配置 API（可选）
 
-打开浏览器访问前端地址，首次使用会弹出设置面板：
+打开浏览器访问前端地址，可以在设置面板中覆盖后端的默认配置：
 
 - **后端地址**: `http://localhost:8000`
-- **API Key**: 你的 OpenAI 兼容 API Key
-- **模型**: 如 `gpt-4o-mini`, `gpt-4o` 等
+- **API Key**: 如果前端不填，将使用后端 .env 中的配置
+- **模型**: 如果前端不填，将使用后端 .env 中的配置
+
+**注意**：前端配置会覆盖后端 .env 配置。如果前端不填写任何配置，将直接使用后端 .env 中的默认值。
 
 ## 功能特性
 

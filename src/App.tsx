@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import type { LLMConfig } from './types';
-import { loadConfig, defaultLLMConfig } from './config';
+import type { AppConfig } from './types';
+import { loadConfig, defaultConfig } from './config';
 import ChatInterface from './components/ChatInterface';
 import Sidebar from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
 
 export default function App() {
-  const [config, setConfig] = useState<LLMConfig>(defaultLLMConfig);
+  const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [showSettings, setShowSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -38,7 +38,7 @@ export default function App() {
               <h1 className="text-sm font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent leading-tight">
                 Workforce Operations Agent
               </h1>
-              <p className="text-[10px] text-slate-500">MVP Demo · Phase 0</p>
+              <p className="text-[10px] text-slate-500">MVP Demo · FastAPI + React</p>
             </div>
           </div>
         </div>
@@ -73,7 +73,7 @@ export default function App() {
         {/* Sidebar */}
         {sidebarOpen && (
           <div className="w-72 flex-shrink-0 hidden md:block">
-            <Sidebar />
+            <Sidebar config={config} />
           </div>
         )}
 

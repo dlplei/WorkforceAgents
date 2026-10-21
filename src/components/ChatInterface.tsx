@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResult, LLMConfig } from '../types';
-import { AgentEngine } from '../agent/engine';
+import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, AppConfig } from '../types';
 
 interface Props {
-  config: LLMConfig;
+  config: AppConfig;
   onOpenSettings: () => void;
 }
 
@@ -12,24 +11,12 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
   const [input, setInput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
-  const [currentToolResults, setCurrentToolResults] = useState<ToolResult[]>([]);
+  const [currentToolResults, setCurrentToolResults] = useState<ToolResultInfo[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [activeNode, setActiveNode] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const engineRef = useRef<AgentEngine | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  // Initialize engine
-  useEffect(() => {
-    engineRef.current = new AgentEngine(config);
-  }, []);
-
-  // Update config
-  useEffect(() => {
-    if (engineRef.current) {
-      engineRef.current.updateConfig(config);
-    }
-  }, [config]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Auto scroll
   useEffect(() => {
@@ -59,15 +46,66 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     };
     setMessages(prev => [...prev, userMsg]);
 
-    if (!engineRef.current) return;
+    // Create abort controller
+    abortControllerRef.current = new AbortController();
 
     try {
-      const events = engineRef.current.run(userMessage);
+      // Call backend API
+      const response = await fetch(`${config.backendUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: userMessage,
+          config: {
+            base_url: config.backendUrl.replace(/\/api$/, ''), // Backend will forward to LLM
+            api_key: config.apiKey,
+            model: config.model,
+            temperature: config.temperature,
+            max_tokens: config.maxTokens,
+          },
+        }),
+        signal: abortControllerRef.current.signal,
+      });
 
-      for await (const event of events) {
-        handleEvent(event);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Parse SSE stream
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('无法读取响应流');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (!data) continue;
+
+          try {
+            const event: AgentEvent = JSON.parse(data);
+            handleEvent(event);
+          } catch {
+            // Skip malformed JSON
+          }
+        }
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Request was aborted
+        return;
+      }
       const errorMsg = err instanceof Error ? err.message : String(err);
       setMessages(prev => [...prev, {
         id: `error-${Date.now()}`,
@@ -78,6 +116,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     } finally {
       setIsRunning(false);
       setActiveNode('');
+      abortControllerRef.current = null;
     }
   }, [input, isRunning, config, onOpenSettings]);
 
@@ -86,29 +125,34 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
       case 'status':
         break;
       case 'node_enter':
-        setActiveNode(event.node);
+        setActiveNode(event.content);
         break;
       case 'node_exit':
         setActiveNode('');
         break;
       case 'tool_call':
-        setCurrentToolCalls(prev => [...prev, event.toolCall]);
+        setCurrentToolCalls(prev => [...prev, event.data]);
         break;
       case 'tool_result':
-        setCurrentToolResults(prev => [...prev, event.result]);
+        setCurrentToolResults(prev => [...prev, event.data]);
         break;
       case 'token':
         setStreamingContent(prev => prev + event.content);
         break;
       case 'message_complete':
-        setMessages(prev => [...prev, event.message]);
+        setMessages(prev => [...prev, {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: event.content,
+          timestamp: Date.now(),
+        }]);
         setStreamingContent('');
         break;
       case 'error':
         setMessages(prev => [...prev, {
           id: `error-${Date.now()}`,
           role: 'assistant',
-          content: `❌ ${event.error}`,
+          content: `❌ ${event.content}`,
           timestamp: Date.now(),
         }]);
         setStreamingContent('');
@@ -128,7 +172,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     setStreamingContent('');
     setCurrentToolCalls([]);
     setCurrentToolResults([]);
-    engineRef.current?.clearHistory();
+    // Note: Backend conversation history is not cleared in this demo
   };
 
   const quickActions = [
@@ -208,7 +252,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
               ))}
               {currentToolResults.map((tr, i) => (
                 <div key={`r-${i}`} className={`text-xs mt-1 ${tr.success ? 'text-green-400' : 'text-red-400'}`}>
-                  ← {tr.toolName}: {tr.success ? '✓ 成功' : `✗ ${tr.error}`} ({tr.executionTime.toFixed(0)}ms)
+                  ← {tr.tool_name}: {tr.success ? '✓ 成功' : `✗ ${tr.error}`} ({(tr.execution_time * 1000).toFixed(0)}ms)
                 </div>
               ))}
             </div>
@@ -298,6 +342,7 @@ function formatMessage(content: string): string {
     .replace(/^- (.*$)/gm, '<li class="ml-4 list-disc">$1</li>')
     .replace(/^(\d+)\. (.*$)/gm, '<li class="ml-4 list-decimal">$2</li>');
 }
+
 function getNodeLabel(node: string): string {
   const labels: Record<string, string> = {
     'knowledge_retrieval': '📚 检索知识...',

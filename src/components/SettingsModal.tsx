@@ -1,15 +1,15 @@
 import { useState } from 'react';
-import type { LLMConfig } from '../types';
+import type { AppConfig } from '../types';
 import { saveConfig } from '../config';
 
 interface Props {
-  config: LLMConfig;
-  onSave: (config: LLMConfig) => void;
+  config: AppConfig;
+  onSave: (config: AppConfig) => void;
   onClose: () => void;
 }
 
 export default function SettingsModal({ config, onSave, onClose }: Props) {
-  const [form, setForm] = useState<LLMConfig>({ ...config });
+  const [form, setForm] = useState<AppConfig>({ ...config });
   const [showKey, setShowKey] = useState(false);
 
   const handleSave = () => {
@@ -25,7 +25,7 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <h2 className="text-lg font-semibold text-white flex items-center">
             <i className="fas fa-cog text-slate-400 mr-2"></i>
-            API 配置
+            配置
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
             <i className="fas fa-times"></i>
@@ -35,19 +35,19 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
         {/* Form */}
         <div className="px-6 py-5 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Base URL</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">后端地址 (Backend URL)</label>
             <input
               type="text"
-              value={form.baseUrl}
-              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-              placeholder="https://api.openai.com/v1"
+              value={form.backendUrl}
+              onChange={(e) => setForm({ ...form, backendUrl: e.target.value })}
+              placeholder="http://localhost:8000"
               className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
             />
-            <p className="text-xs text-slate-500 mt-1">OpenAI 兼容 API 的基础 URL</p>
+            <p className="text-xs text-slate-500 mt-1">FastAPI 后端服务地址</p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">API Key</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">LLM API Key</label>
             <div className="relative">
               <input
                 type={showKey ? 'text' : 'password'}
@@ -64,7 +64,7 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
                 <i className={`fas ${showKey ? 'fa-eye-slash' : 'fa-eye'} text-sm`}></i>
               </button>
             </div>
-            <p className="text-xs text-slate-500 mt-1">API Key 仅保存在浏览器本地，不会上传到服务器</p>
+            <p className="text-xs text-slate-500 mt-1">OpenAI 兼容 API 的 Key，会传递给后端</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

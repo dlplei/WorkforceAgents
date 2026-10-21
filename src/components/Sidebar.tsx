@@ -1,8 +1,29 @@
+import { useState, useEffect } from 'react';
+import type { AppConfig, ToolInfo } from '../types';
 import { currentEmployee } from '../config';
-import { getAllTools } from '../agent/tools';
 
-export default function Sidebar() {
-  const tools = getAllTools();
+interface Props {
+  config: AppConfig;
+}
+
+export default function Sidebar({ config }: Props) {
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+
+  // Fetch tools from backend
+  useEffect(() => {
+    const fetchTools = async () => {
+      try {
+        const response = await fetch(`${config.backendUrl}/api/tools`);
+        if (response.ok) {
+          const data = await response.json();
+          setTools(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch tools:', err);
+      }
+    };
+    fetchTools();
+  }, [config.backendUrl]);
 
   return (
     <div className="h-full overflow-y-auto bg-slate-800/30 border-r border-slate-700/50">
@@ -56,11 +77,11 @@ export default function Sidebar() {
       <div className="p-4 border-b border-slate-700/50">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">可用工具 ({tools.length})</h3>
         <div className="space-y-1.5">
-          {tools.map((tool) => (
+          {tools.map((tool: ToolInfo) => (
             <div key={tool.name} className="flex items-start space-x-2 group">
               <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
-                tool.permissionLevel === 'autonomous' ? 'bg-green-400' :
-                tool.permissionLevel === 'confirmation' ? 'bg-amber-400' : 'bg-red-400'
+                tool.permission_level === 'autonomous' ? 'bg-green-400' :
+                tool.permission_level === 'confirmation' ? 'bg-amber-400' : 'bg-red-400'
               }`}></div>
               <div>
                 <div className="text-xs font-mono text-slate-300">{tool.name}</div>
@@ -68,18 +89,22 @@ export default function Sidebar() {
               </div>
             </div>
           ))}
+          {tools.length === 0 && (
+            <p className="text-xs text-slate-500">无法连接后端...</p>
+          )}
         </div>
       </div>
 
       {/* Architecture Info */}
       <div className="p-4">
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Agent 架构</h3>
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">系统架构</h3>
         <div className="space-y-2">
           {[
+            { label: '前端', value: 'React + Vite', icon: 'fa-react' },
+            { label: '后端', value: 'FastAPI + Python', icon: 'fa-python' },
             { label: '引擎', value: 'ReAct + Tool Calling', icon: 'fa-brain' },
             { label: '知识库', value: 'Mock RAG (7篇政策)', icon: 'fa-book' },
-            { label: 'Memory', value: '会话历史 (内存)', icon: 'fa-database' },
-            { label: '流式输出', value: 'SSE Streaming', icon: 'fa-bolt' },
+            { label: '通信', value: 'SSE Streaming', icon: 'fa-bolt' },
           ].map((item) => (
             <div key={item.label} className="flex items-center space-x-2 text-xs">
               <i className={`fas ${item.icon} text-slate-500 w-4`}></i>

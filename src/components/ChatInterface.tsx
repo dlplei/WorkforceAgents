@@ -17,6 +17,8 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const toolCallsRef = useRef<ToolCallInfo[]>([]);
+  const toolResultsRef = useRef<ToolResultInfo[]>([]);
 
   // Auto scroll
   useEffect(() => {
@@ -34,6 +36,8 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     setInput('');
     setIsRunning(true);
     setStreamingContent('');
+    toolCallsRef.current = [];
+    toolResultsRef.current = [];
     setCurrentToolCalls([]);
     setCurrentToolResults([]);
 
@@ -116,6 +120,10 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     } finally {
       setIsRunning(false);
       setActiveNode('');
+      setCurrentToolCalls([]);
+      setCurrentToolResults([]);
+      toolCallsRef.current = [];
+      toolResultsRef.current = [];
       abortControllerRef.current = null;
     }
   }, [input, isRunning, config, onOpenSettings]);
@@ -131,10 +139,12 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         setActiveNode('');
         break;
       case 'tool_call':
-        setCurrentToolCalls(prev => [...prev, event.data]);
+        toolCallsRef.current.push(event.data);
+        setCurrentToolCalls([...toolCallsRef.current]);
         break;
       case 'tool_result':
-        setCurrentToolResults(prev => [...prev, event.data]);
+        toolResultsRef.current.push(event.data);
+        setCurrentToolResults([...toolResultsRef.current]);
         break;
       case 'token':
         setStreamingContent(prev => prev + event.content);
@@ -145,8 +155,14 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
           role: 'assistant',
           content: event.content,
           timestamp: Date.now(),
+          toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
+          toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
         }]);
         setStreamingContent('');
+        setCurrentToolCalls([]);
+        setCurrentToolResults([]);
+        toolCallsRef.current = [];
+        toolResultsRef.current = [];
         break;
       case 'error':
         setMessages(prev => [...prev, {
@@ -154,8 +170,14 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
           role: 'assistant',
           content: `❌ ${event.content}`,
           timestamp: Date.now(),
+          toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
+          toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
         }]);
         setStreamingContent('');
+        setCurrentToolCalls([]);
+        setCurrentToolResults([]);
+        toolCallsRef.current = [];
+        toolResultsRef.current = [];
         break;
     }
   };
@@ -172,6 +194,8 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     setStreamingContent('');
     setCurrentToolCalls([]);
     setCurrentToolResults([]);
+    toolCallsRef.current = [];
+    toolResultsRef.current = [];
     // Note: Backend conversation history is not cleared in this demo
   };
 
@@ -238,13 +262,17 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         ))}
 
         {/* Tool calls in progress */}
-        {currentToolCalls.length > 0 && (
+        {isRunning && currentToolCalls.length > 0 && (
           <div className="flex items-start space-x-3">
             <div className="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
-              <i className="fas fa-cogs text-xs text-purple-400 animate-spin"></i>
+              <i className={`fas fa-cogs text-xs text-purple-400 ${
+                currentToolCalls.length > currentToolResults.length ? 'animate-spin' : ''
+              }`}></i>
             </div>
             <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl rounded-tl-none px-4 py-3 max-w-lg">
-              <p className="text-xs text-slate-400 mb-2">🔧 正在调用工具...</p>
+              <p className="text-xs text-slate-400 mb-2">
+                {currentToolCalls.length > currentToolResults.length ? '🔧 正在调用工具...' : '✓ 工具调用完成，正在生成回复...'}
+              </p>
               {currentToolCalls.map((tc, i) => (
                 <div key={i} className="text-xs text-cyan-300 font-mono mb-1">
                   → {tc.name}({JSON.stringify(tc.arguments)})
@@ -309,6 +337,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
   const formatted = isUser ? message.content : formatMessage(message.content);
+  const [showTools, setShowTools] = useState(false);
 
   return (
     <div className={`flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
@@ -322,6 +351,32 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           ? 'bg-blue-600/20 border border-blue-500/30 rounded-tr-none'
           : 'bg-slate-800/50 border border-slate-700/50 rounded-tl-none'
       }`}>
+        {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
+          <div className="mb-2 pb-2 border-b border-slate-700/50">
+            <button
+              onClick={() => setShowTools(!showTools)}
+              className="text-xs text-purple-300 hover:text-purple-200 flex items-center space-x-1 cursor-pointer"
+            >
+              <i className="fas fa-tools text-xs"></i>
+              <span>已调用 {message.toolCalls.length} 个工具</span>
+              <i className={`fas fa-chevron-${showTools ? 'up' : 'down'} text-[10px] ml-1`}></i>
+            </button>
+            {showTools && (
+              <div className="mt-2 p-2 bg-slate-900/60 rounded border border-slate-700/40 text-xs font-mono space-y-1">
+                {message.toolCalls.map((tc, i) => (
+                  <div key={i} className="text-cyan-300">
+                    → {tc.name}({JSON.stringify(tc.arguments)})
+                  </div>
+                ))}
+                {message.toolResults?.map((tr, i) => (
+                  <div key={`res-${i}`} className={tr.success ? 'text-green-400' : 'text-red-400'}>
+                    ← {tr.tool_name}: {tr.success ? '✓ 成功' : `✗ ${tr.error}`} ({(tr.execution_time * 1000).toFixed(0)}ms)
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {isUser ? (
           <div className="text-sm text-slate-200 whitespace-pre-wrap">{message.content}</div>
         ) : (

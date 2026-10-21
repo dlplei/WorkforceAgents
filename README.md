@@ -160,6 +160,37 @@ npm run build
 4. **开具证明**: "我需要开一份在职证明，用于办理签证"
 5. **请假申请**: "帮我请10月8日到10日的年假"
 
+## 日志与调试
+
+### 查看日志
+
+后端会输出详细的日志信息，包括：
+
+- 🚀 LLM API 调用信息（URL、模型、API Key）
+- 📋 请求配置（温度、最大 token 数）
+- 📨 响应状态码和响应头
+- 🔧 工具调用详情
+- 💥 完整错误堆栈
+
+### 常见错误诊断
+
+如果遇到 `LLM API 错误 (403): Connect failed` 等连接错误：
+
+1. **查看详细日志**：后端控制台会输出完整的错误信息和诊断建议
+2. **检查配置**：确认 Base URL、API Key、模型名称正确
+3. **测试连接**：使用 curl 测试 LLM API 连接
+4. **查看故障排除文档**：参考 `TROUBLESHOOTING.md`
+
+### 调整日志级别
+
+```python
+# backend/main.py
+logging.basicConfig(
+    level=logging.DEBUG,  # DEBUG/INFO/WARNING/ERROR
+    ...
+)
+```
+
 ## 后续升级路径
 
 ### Phase 1

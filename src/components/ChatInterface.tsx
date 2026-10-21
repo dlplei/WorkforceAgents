@@ -59,7 +59,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         body: JSON.stringify({
           message: userMessage,
           config: {
-            base_url: config.backendUrl.replace(/\/api$/, ''), // Backend will forward to LLM
+            base_url: config.llmBaseUrl,  // LLM API 地址
             api_key: config.apiKey,
             model: config.model,
             temperature: config.temperature,

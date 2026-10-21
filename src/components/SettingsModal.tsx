@@ -43,7 +43,19 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
               placeholder="http://localhost:8000"
               className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
             />
-            <p className="text-xs text-slate-500 mt-1">FastAPI 后端服务地址</p>
+            <p className="text-xs text-slate-500 mt-1">本地 FastAPI 后端服务地址（默认 http://localhost:8000）</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">LLM API 地址 (LLM Base URL)</label>
+            <input
+              type="text"
+              value={form.llmBaseUrl}
+              onChange={(e) => setForm({ ...form, llmBaseUrl: e.target.value })}
+              placeholder="https://api.openai.com/v1"
+              className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
+            />
+            <p className="text-xs text-slate-500 mt-1">OpenAI 兼容的 LLM API 服务地址（会传递给后端）</p>
           </div>
 
           <div>

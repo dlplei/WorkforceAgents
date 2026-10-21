@@ -3,3 +3,5 @@ node_modules/
 dist/
 build/
 *.log
+/backend/__pycache__
+/backend/agent/__pycache__

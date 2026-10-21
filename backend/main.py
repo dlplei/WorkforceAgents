@@ -2,6 +2,7 @@
 Workforce Operations Agent - FastAPI Backend
 """
 import json
+import logging
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,16 @@ from config import LLMConfig, update_config, get_config
 from agent.engine import AgentEngine
 from agent.tools import registry
 from mock_data import get_current_employee
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # 输出到控制台
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 # ============ FastAPI App ============
@@ -30,6 +41,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动事件"""
+    logger.info("=" * 60)
+    logger.info("🚀 Workforce Operations Agent 启动中...")
+    logger.info("=" * 60)
+    logger.info(f"📦 已注册工具数量: {len(registry.get_all())}")
+    for tool in registry.get_all():
+        logger.info(f"   - {tool['name']}: {tool['description'][:50]}...")
+    logger.info("=" * 60)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭事件"""
+    logger.info("👋 Workforce Operations Agent 已关闭")
 
 
 # ============ Request/Response Models ============
@@ -112,9 +141,21 @@ async def chat(req: ChatRequest):
     - status: 状态变化
     - node_enter/exit: 节点进入/退出
     """
+    logger.info(f"💬 收到聊天请求: {req.message[:100]}...")
+    
     # 更新配置（如果请求中提供了）
     if req.config:
+        logger.info("🔄 更新 LLM 配置")
         update_config(req.config)
+        
+        # 记录配置信息
+        cfg = get_config()
+        logger.info(f"📋 LLM 配置:")
+        logger.info(f"   - Base URL: {cfg.base_url}")
+        logger.info(f"   - Model: {cfg.model}")
+        logger.info(f"   - Temperature: {cfg.temperature}")
+        logger.info(f"   - Max Tokens: {cfg.max_tokens}")
+        logger.info(f"   - API Key: {'已配置' if cfg.api_key else '未配置'}")
 
     # 创建 Agent 引擎
     engine = AgentEngine()
@@ -123,10 +164,12 @@ async def chat(req: ChatRequest):
         try:
             async for event in engine.run(req.message):
                 # 格式化为 SSE
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                yield f" {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
+            logger.error(f"💥 聊天处理错误: {type(e).__name__}: {e}")
+            logger.exception("完整异常堆栈:")
             error_event = {"type": "error", "content": str(e)}
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            yield f" {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -148,4 +191,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
+        log_level="info",
     )

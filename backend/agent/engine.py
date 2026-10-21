@@ -3,6 +3,7 @@ Agent 核心引擎 - ReAct 循环 + 流式输出
 """
 import json
 import asyncio
+import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional
 import httpx
 
@@ -10,6 +11,13 @@ from config import LLMConfig, get_config
 from mock_data import get_current_employee
 from agent.knowledge import retrieve_knowledge
 from agent.tools import registry
+
+# 配置日志
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 
 # ============ System Prompt ============
@@ -183,6 +191,17 @@ class AgentEngine:
             raise ValueError("请先配置 API Key")
 
         url = f"{cfg.base_url.rstrip('/')}/chat/completions"
+        
+        # 记录请求信息
+        logger.info(f"🚀 调用 LLM API: {url}")
+        logger.info(f"📋 模型: {cfg.model}")
+        logger.info(f"📊 消息数量: {len(messages)}")
+        logger.info(f"🔧 工具数量: {len(registry.get_for_llm())}")
+        logger.debug(f"🌡️  Temperature: {cfg.temperature}, Max Tokens: {cfg.max_tokens}")
+        
+        # 隐藏 API Key 的日志
+        api_key_masked = cfg.api_key[:8] + "..." + cfg.api_key[-4:] if len(cfg.api_key) > 12 else "***"
+        logger.info(f"🔑 API Key: {api_key_masked}")
 
         payload = {
             "model": cfg.model,
@@ -193,21 +212,61 @@ class AgentEngine:
             "stream": True,
         }
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            async with client.stream(
-                "POST",
-                url,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {cfg.api_key}",
-                },
-                json=payload,
-            ) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    raise ValueError(f"LLM API 错误 ({response.status_code}): {error_text.decode()}")
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                logger.info("📡 发送请求中...")
+                
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {cfg.api_key}",
+                    },
+                    json=payload,
+                ) as response:
+                    logger.info(f"📨 响应状态码: {response.status_code}")
+                    logger.info(f"📝 响应头: {dict(response.headers)}")
+                    
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        error_msg = error_text.decode()
+                        logger.error(f"❌ LLM API 错误: {response.status_code}")
+                        logger.error(f"❌ 错误详情: {error_msg}")
+                        raise ValueError(
+                            f"LLM API 错误 ({response.status_code}): {error_msg}\n"
+                            f"URL: {url}\n"
+                            f"模型: {cfg.model}"
+                        )
 
-                return await self._parse_stream(response)
+                    logger.info("✅ 开始解析响应流")
+                    return await self._parse_stream(response)
+                    
+        except httpx.ConnectError as e:
+            logger.error(f"🔌 连接错误: {e}")
+            logger.error(f"🔌 目标 URL: {url}")
+            logger.error(f"🔌 可能的原因:")
+            logger.error(f"   1. 后端无法访问 LLM API 服务器")
+            logger.error(f"   2. 网络连接问题或防火墙限制")
+            logger.error(f"   3. API Base URL 配置错误")
+            logger.error(f"   4. 需要代理但未配置")
+            raise ValueError(
+                f"无法连接到 LLM API: {url}\n"
+                f"错误: {e}\n"
+                f"请检查:\n"
+                f"1. Base URL 是否正确: {cfg.base_url}\n"
+                f"2. 网络是否可以访问该地址\n"
+                f"3. 是否需要配置代理"
+            ) from e
+            
+        except httpx.TimeoutException as e:
+            logger.error(f"⏱️  请求超时: {e}")
+            raise ValueError(f"LLM API 请求超时，请检查网络连接或稍后重试") from e
+            
+        except Exception as e:
+            logger.error(f"💥 未预期的错误: {type(e).__name__}: {e}")
+            logger.exception("完整异常堆栈:")
+            raise ValueError(f"调用 LLM API 时发生错误: {e}") from e
 
     async def _parse_stream(self, response) -> Dict[str, Any]:
         """解析 SSE 流"""

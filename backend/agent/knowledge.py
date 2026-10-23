@@ -5,8 +5,12 @@ import os
 import re
 from typing import List, Optional
 import httpx
-import chromadb
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+except ImportError:
+    chromadb = None
+    Settings = None
 from models import PolicyDocument, KnowledgeChunk
 
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
@@ -24,6 +28,8 @@ _chroma_collection = None
 def get_chroma_collection():
     """获取或初始化 Chroma 向量集合"""
     global _chroma_client, _chroma_collection
+    if chromadb is None:
+        return None
     if _chroma_collection is not None:
         return _chroma_collection
 

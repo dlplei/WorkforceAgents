@@ -1,17 +1,16 @@
 """
-Agent 核心引擎 - ReAct 循环 + 流式输出
+Agent 核心引擎 - LangGraph 工作流驱动 + SSE 流式输出
 """
 import json
 import asyncio
 import logging
 from typing import AsyncGenerator, Dict, Any, List, Optional
 from datetime import datetime
-import httpx
+
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 from config import LLMConfig, get_config
-from db.database import get_current_employee
-from agent.knowledge import retrieve_knowledge
-from agent.tools import registry
+from agent.graph import build_workforce_graph, build_system_prompt
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -21,61 +20,16 @@ logging.basicConfig(
 )
 
 
-# ============ System Prompt ============
-
-def build_system_prompt() -> str:
-    emp = get_current_employee()
-    now = datetime.now()
-    weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
-    current_date_str = f"{now.year}年{now.month}月{now.day}日 {weekdays[now.weekday()]}"
-    current_iso_date = now.strftime("%Y-%m-%d")
-
-    return f"""你是一个智能员工服务与人力运营 Agent（Workforce Operations Agent）。
-
-## 你的身份
-- 你服务于「星辰科技有限公司」的员工
-- 当前登录员工：{emp.name}（{emp.id}），{emp.department}，{emp.position}
-- 你的职责是帮助员工完成 HR 相关事务
-
-## 当前环境与时间基准（重要）
-- 当前系统日期：{current_date_str}（{current_iso_date}）
-- 当前所在年份：{now.year}年
-- **日期处理与推断原则**：
-  1. 员工在日常对话中通常使用相对日期（如"明天"、"下周三"）或省略年份（如"10月8日到10日"）。
-  2. 你**必须严格以当前系统日期（{now.year}年）为基准**推算目标年份和日期，绝对不要使用 2024 年或任何训练集中的历史过时年份。
-  3. 未指明年份时，优先推断为当前年份（{now.year}年）；若该日期在当前年份已过去且语境表明是未来请假，则合理推断为下一自然年（{now.year + 1}年）。
-  4. 生成确认摘要和调用工具参数时，请使用正确的推断日期（格式：YYYY-MM-DD）。
-
-## 你的能力
-1. 政策咨询：查询和解释公司各项 HR 政策
-2. 休假管理：查询假期余额、协助请假申请
-3. 差旅管理：计算差旅预算、协助差旅申请
-4. 证明开具：协助开具各类证明
-5. 信息查询：查询员工信息、审批状态等
-
-## 工作原则
-1. **Policy Grounding**：回答政策问题时，必须基于检索到的政策原文，不可编造
-2. **引用来源**：回答时标注政策依据（如"根据《员工年假管理办法》第X条"）
-3. **确认操作**：涉及提交申请等写操作时，必须先展示摘要请用户确认
-4. **个性化**：结合当前员工的身份、部门、级别给出个性化建议
-5. **诚实边界**：不确定的内容明确告知，不猜测
-
-## 输出格式
-- 使用清晰的 Markdown 格式
-- 重要信息用 **加粗** 标注
-- 列表项用 - 或数字编号
-- 涉及金额、天数等关键数据要突出显示"""
-
 
 # ============ Agent Engine ============
 
 class AgentEngine:
-    """Agent 引擎"""
+    """基于 LangGraph 状态图的 Agent 引擎"""
 
     def __init__(self, config: Optional[LLMConfig] = None):
         self.config = config or get_config()
         self.conversation_history: List[Dict[str, Any]] = []
-        self.max_iterations = 6
+        self.max_iterations = 15
 
     def update_config(self, config: LLMConfig):
         self.config = config
@@ -84,269 +38,117 @@ class AgentEngine:
         self.conversation_history = []
 
     async def run(self, user_message: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """运行 Agent，产生事件流"""
+        """运行 Agent 状态图，产生对齐前端协议的 SSE 事件流"""
+        logger.info(f"🚀 开始执行 Agent 请求: {user_message[:60]}...")
 
-        # 添加用户消息到历史
-        self.conversation_history.append({"role": "user", "content": user_message})
-
-        # 检索知识
+        # 初始思考状态
         yield {"type": "status", "content": "thinking"}
-        yield {"type": "node_enter", "content": "knowledge_retrieval"}
 
-        knowledge = retrieve_knowledge(user_message, top_k=3)
-        context_prompt = ""
-        if knowledge:
-            context_prompt = "\n\n## 相关政策知识（检索结果）\n"
-            for i, k in enumerate(knowledge, 1):
-                context_prompt += f"\n### [{i}] {k.title}（{k.doc_id}）\n{k.content}\n"
-
-        yield {"type": "node_exit", "content": "knowledge_retrieval"}
-
-        # 构建消息列表
-        messages = [
-            {"role": "system", "content": build_system_prompt() + context_prompt},
-        ]
+        # 构建历史消息列表
+        messages: List[BaseMessage] = []
         for msg in self.conversation_history:
-            messages.append(msg)
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
 
-        # ReAct 循环
-        iteration = 0
-        while iteration < self.max_iterations:
-            iteration += 1
-            yield {"type": "node_enter", "content": "reasoning"}
+        # 加入当前用户消息
+        messages.append(HumanMessage(content=user_message))
 
-            try:
-                response = await self._call_llm(messages)
-                yield {"type": "node_exit", "content": "reasoning"}
+        # 构建并编译 LangGraph 状态图
+        graph = build_workforce_graph(self.config)
 
-                # 检查是否有工具调用
-                tool_calls = response.get("tool_calls")
-                if tool_calls:
-                    # 添加 assistant 消息（含 tool_calls）
-                    messages.append({
-                        "role": "assistant",
-                        "content": response.get("content") or "",
-                        "tool_calls": tool_calls,
-                    })
+        full_content = ""
+        in_response_generation = False
+        current_has_tool_call = False
 
-                    # 执行每个工具
-                    for tc in tool_calls:
-                        yield {
-                            "type": "tool_call",
-                            "data": {
-                                "id": tc["id"],
-                                "name": tc["function"]["name"],
-                                "arguments": json.loads(tc["function"]["arguments"]),
-                            },
-                        }
+        try:
+            async for ev in graph.astream_events(
+                {"messages": messages},
+                version="v2",
+                config={"recursion_limit": self.max_iterations * 2}
+            ):
+                event_kind = ev.get("event")
+                name = ev.get("name")
+
+                # 1. 状态图节点进入
+                if event_kind == "on_chain_start":
+                    if name == "knowledge_retrieval":
+                        yield {"type": "node_enter", "content": "knowledge_retrieval"}
+                    elif name == "reasoning":
+                        current_has_tool_call = False
+                        yield {"type": "node_enter", "content": "reasoning"}
+                    elif name == "tool_execution":
                         yield {"type": "status", "content": "tool_calling"}
                         yield {"type": "node_enter", "content": "tool_execution"}
 
-                        result = await registry.execute(
-                            tc["function"]["name"],
-                            json.loads(tc["function"]["arguments"]),
-                        )
-
-                        yield {"type": "tool_result", "data": result.model_dump()}
-
-                        # 添加工具结果到消息
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": json.dumps(result.data or result.error or "", ensure_ascii=False),
-                        })
-
+                # 2. 状态图节点退出
+                elif event_kind == "on_chain_end":
+                    if name == "knowledge_retrieval":
+                        yield {"type": "node_exit", "content": "knowledge_retrieval"}
+                    elif name == "reasoning":
+                        if in_response_generation:
+                            yield {"type": "node_exit", "content": "response_generation"}
+                            in_response_generation = False
+                        yield {"type": "node_exit", "content": "reasoning"}
+                    elif name == "tool_execution":
                         yield {"type": "node_exit", "content": "tool_execution"}
 
-                    # 继续循环获取最终回复
-                    continue
+                # 3. 自定义事件（工具调用与工具返回）
+                elif event_kind == "on_custom_event":
+                    if ev.get("name") == "tool_call":
+                        yield {"type": "tool_call", "data": ev.get("data")}
+                    elif ev.get("name") == "tool_result":
+                        yield {"type": "tool_result", "data": ev.get("data")}
 
-                # 没有工具调用 - 这是最终回复
-                yield {"type": "status", "content": "responding"}
-                yield {"type": "node_enter", "content": "response_generation"}
+                # 4. 模型流式输出
+                elif event_kind == "on_chat_model_stream":
+                    chunk = ev.get("data", {}).get("chunk")
+                    if not chunk:
+                        continue
 
-                full_content = response.get("content", "")
+                    # 若存在工具调用 chunk，标记当前轮次为工具调用，不推送文本 token
+                    if getattr(chunk, "tool_call_chunks", None):
+                        current_has_tool_call = True
 
-                # 流式输出（如果是流式响应）
-                if response.get("stream"):
-                    async for chunk in response["stream"]:
-                        yield {"type": "token", "content": chunk}
-                else:
-                    # 非流式，一次性输出
-                    for char in full_content:
-                        yield {"type": "token", "content": char}
-                        await asyncio.sleep(0)  # 让出控制权
+                    # 正常生成文本 token 且本轮无工具调用
+                    if chunk.content and not current_has_tool_call:
+                        if not in_response_generation:
+                            in_response_generation = True
+                            yield {"type": "status", "content": "responding"}
+                            yield {"type": "node_enter", "content": "response_generation"}
 
-                yield {"type": "node_exit", "content": "response_generation"}
+                        yield {"type": "token", "content": chunk.content}
+                        full_content += chunk.content
 
-                # 添加到历史
-                self.conversation_history.append({
-                    "role": "assistant",
-                    "content": full_content,
-                })
+                # 5. 模型输出结束（兜底处理）
+                elif event_kind == "on_chat_model_end":
+                    output = ev.get("data", {}).get("output")
+                    if output and not getattr(output, "tool_calls", None):
+                        output_text = getattr(output, "content", "")
+                        if not full_content and output_text:
+                            yield {"type": "status", "content": "responding"}
+                            yield {"type": "node_enter", "content": "response_generation"}
+                            for char in output_text:
+                                yield {"type": "token", "content": char}
+                                await asyncio.sleep(0)
+                            full_content = output_text
 
-                yield {"type": "message_complete", "content": full_content}
-                yield {"type": "status", "content": "idle"}
-                logger.info(f"🎉 聊天响应处理完毕，已推送给前端 (共 {len(full_content)} 字符)")
-                return
+            # 6. 保存至历史并通知前端完成
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": full_content})
 
-            except Exception as e:
-                yield {"type": "error", "content": str(e)}
-                yield {"type": "status", "content": "error"}
-                return
+            yield {"type": "message_complete", "content": full_content}
+            yield {"type": "status", "content": "idle"}
+            logger.info(f"🎉 聊天响应处理完毕，已推送给前端 (共 {len(full_content)} 字符)")
 
-        # 达到最大迭代
-        yield {"type": "error", "content": "Agent 达到最大迭代次数，请简化您的问题"}
-        yield {"type": "status", "content": "idle"}
-
-    async def _call_llm(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """调用 LLM API"""
-        cfg = self.config
-
-        if not cfg.api_key:
-            raise ValueError("请先配置 API Key")
-
-        url = f"{cfg.base_url.rstrip('/')}/chat/completions"
-        
-        # 记录请求信息
-        logger.info(f"🚀 调用 LLM API: {url}")
-        logger.info(f"📋 模型: {cfg.model}")
-        logger.info(f"📊 消息数量: {len(messages)}")
-        logger.info(f"🔧 工具数量: {len(registry.get_for_llm())}")
-        logger.debug(f"🌡️  Temperature: {cfg.temperature}, Max Tokens: {cfg.max_tokens}")
-        
-        # 隐藏 API Key 的日志
-        api_key_masked = cfg.api_key[:8] + "..." + cfg.api_key[-4:] if len(cfg.api_key) > 12 else "***"
-        logger.info(f"🔑 API Key: {api_key_masked}")
-
-        payload = {
-            "model": cfg.model,
-            "messages": messages,
-            "tools": registry.get_for_llm(),
-            "temperature": cfg.temperature,
-            "max_tokens": cfg.max_tokens,
-            "stream": True,
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                logger.info("📡 发送请求中...")
-                
-                async with client.stream(
-                    "POST",
-                    url,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {cfg.api_key}",
-                    },
-                    json=payload,
-                ) as response:
-                    logger.info(f"📨 响应状态码: {response.status_code}")
-                    logger.info(f"📝 响应头: {dict(response.headers)}")
-                    
-                    if response.status_code != 200:
-                        error_text = await response.aread()
-                        error_msg = error_text.decode()
-                        logger.error(f"❌ LLM API 错误: {response.status_code}")
-                        logger.error(f"❌ 错误详情: {error_msg}")
-                        raise ValueError(
-                            f"LLM API 错误 ({response.status_code}): {error_msg}\n"
-                            f"URL: {url}\n"
-                            f"模型: {cfg.model}"
-                        )
-
-                    logger.info("✅ 开始解析响应流")
-                    return await self._parse_stream(response)
-                    
-        except httpx.ConnectError as e:
-            logger.error(f"🔌 连接错误: {e}")
-            logger.error(f"🔌 目标 URL: {url}")
-            logger.error(f"🔌 可能的原因:")
-            logger.error(f"   1. 后端无法访问 LLM API 服务器")
-            logger.error(f"   2. 网络连接问题或防火墙限制")
-            logger.error(f"   3. API Base URL 配置错误")
-            logger.error(f"   4. 需要代理但未配置")
-            raise ValueError(
-                f"无法连接到 LLM API: {url}\n"
-                f"错误: {e}\n"
-                f"请检查:\n"
-                f"1. Base URL 是否正确: {cfg.base_url}\n"
-                f"2. 网络是否可以访问该地址\n"
-                f"3. 是否需要配置代理"
-            ) from e
-            
-        except httpx.TimeoutException as e:
-            logger.error(f"⏱️  请求超时: {e}")
-            raise ValueError(f"LLM API 请求超时，请检查网络连接或稍后重试") from e
-            
         except Exception as e:
-            logger.error(f"💥 未预期的错误: {type(e).__name__}: {e}")
-            logger.exception("完整异常堆栈:")
-            raise ValueError(f"调用 LLM API 时发生错误: {e}") from e
+            logger.error(f"Agent engine execution failed: {e}", exc_info=True)
+            yield {"type": "error", "content": str(e)}
+            yield {"type": "status", "content": "error"}
 
-    async def _parse_stream(self, response) -> Dict[str, Any]:
-        """解析 SSE 流"""
-        full_content = ""
-        tool_calls_map: Dict[int, Dict[str, Any]] = {}
-        chunks: List[str] = []
 
-        async for line in response.aiter_lines():
-            if not line.startswith("data: "):
-                continue
-            data = line[6:].strip()
-            if data == "[DONE]":
-                break
 
-            try:
-                parsed = json.loads(data)
-                delta = parsed.get("choices", [{}])[0].get("delta", {})
 
-                # 处理工具调用
-                if "tool_calls" in delta:
-                    for tc in delta["tool_calls"]:
-                        idx = tc.get("index", 0)
-                        if idx not in tool_calls_map:
-                            tool_calls_map[idx] = {
-                                "id": "",
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        existing = tool_calls_map[idx]
-                        if tc.get("id"):
-                            existing["id"] = tc["id"]
-                        if tc.get("function", {}).get("name"):
-                            existing["function"]["name"] = tc["function"]["name"]
-                        if tc.get("function", {}).get("arguments"):
-                            existing["function"]["arguments"] += tc["function"]["arguments"]
-
-                # 处理内容
-                if delta.get("content"):
-                    chunks.append(delta["content"])
-                    full_content += delta["content"]
-
-            except json.JSONDecodeError:
-                continue
-
-        # 如果有工具调用，返回工具调用
-        if tool_calls_map:
-            tool_calls = []
-            for idx in sorted(tool_calls_map.keys()):
-                tc = tool_calls_map[idx]
-                try:
-                    tc["function"]["arguments"] = json.loads(tc["function"]["arguments"])
-                    # 重新序列化为字符串（LLM API 期望字符串）
-                    tc["function"]["arguments"] = json.dumps(tc["function"]["arguments"], ensure_ascii=False)
-                except json.JSONDecodeError:
-                    tc["function"]["arguments"] = "{}"
-                tool_calls.append(tc)
-            logger.info(f"🔧 响应流解析完成: 触发 {len(tool_calls)} 个工具调用")
-            return {"content": full_content, "tool_calls": tool_calls}
-
-        logger.info(f"📝 响应流解析完成: 最终回复共 {len(full_content)} 字符")
-
-        # 否则返回流式内容
-        async def gen_chunks():
-            for chunk in chunks:
-                yield chunk
-
-        return {"content": full_content, "stream": gen_chunks()}

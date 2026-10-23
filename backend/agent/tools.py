@@ -1,12 +1,16 @@
 """
 Tool Calling 框架 - 可插拔工具注册与执行
+集成 HR 服务适配器（PostgreSQL / ServiceNow）与向量化政策检索
 """
 import time
 import json
+import os
 from typing import Dict, Callable, Any, Optional, List
 from models import ToolResult
-from mock_data import get_current_employee, mock_employees, mock_approvals, mock_calendar_events
+from services.hr_adapter import get_hr_adapter
+from db.database import get_current_employee
 from agent.knowledge import retrieve_knowledge
+
 
 
 # ============ 工具注册表 ============
@@ -96,24 +100,22 @@ registry = ToolRegistry()
 
 # 1. 查询假期余额
 async def handle_query_leave_balance(params: dict) -> dict:
-    emp_id = params.get("employee_id") or get_current_employee().id
-    emp = mock_employees.get(emp_id)
+    adapter = get_hr_adapter()
+    emp_id = params.get("employee_id") or get_current_employee()["id"]
+    emp = adapter.get_employee_profile(emp_id)
     if not emp:
         return {"success": False, "error": f"员工 {emp_id} 不存在"}
 
+    balances = adapter.get_leave_balance(emp_id)
     leave_type = params.get("leave_type")
     if leave_type:
-        balance = getattr(emp.leave_balance, leave_type, None)
-        return {"success": True, "data": {"employee": emp.name, "leave_type": leave_type, "balance": balance}}
+        balance = balances.get(leave_type, 0)
+        return {"success": True, "data": {"employee": emp["name"], "leave_type": leave_type, "balance": balance}}
     return {
         "success": True,
         "data": {
-            "employee": emp.name,
-            "leave_balance": {
-                "annual": emp.leave_balance.annual,
-                "sick": emp.leave_balance.sick,
-                "personal": emp.leave_balance.personal,
-            },
+            "employee": emp["name"],
+            "leave_balance": balances,
         },
     }
 
@@ -141,22 +143,24 @@ registry.register(
 
 # 2. 查询员工信息
 async def handle_query_employee_profile(params: dict) -> dict:
-    emp = mock_employees.get(params.get("employee_id", ""))
+    adapter = get_hr_adapter()
+    emp_id = params.get("employee_id") or get_current_employee()["id"]
+    emp = adapter.get_employee_profile(emp_id)
     if not emp:
         return {"success": False, "error": "员工不存在"}
     return {
         "success": True,
         "data": {
-            "id": emp.id,
-            "name": emp.name,
-            "department": emp.department,
-            "position": emp.position,
-            "level": emp.level,
-            "location": emp.location,
-            "manager": emp.manager,
-            "hire_date": emp.hire_date,
-            "contract_type": emp.contract_type,
-            "benefits": emp.benefits,
+            "id": emp["id"],
+            "name": emp["name"],
+            "department": emp["department"],
+            "position": emp["position"],
+            "level": emp["level"],
+            "location": emp["location"],
+            "manager": emp["manager"],
+            "hire_date": emp["hire_date"],
+            "contract_type": emp["contract_type"],
+            "benefits": emp["benefits"],
         },
     }
 
@@ -223,9 +227,11 @@ registry.register(
 
 # 4. 检查日历冲突
 async def handle_check_calendar(params: dict) -> dict:
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
     start_date = params["start_date"]
     end_date = params["end_date"]
-    conflicts = [e for e in mock_calendar_events if start_date <= e["date"] <= end_date]
+    conflicts = adapter.check_calendar_conflicts(emp["id"], start_date, end_date)
     return {
         "success": True,
         "data": {
@@ -256,19 +262,27 @@ registry.register(
 
 # 5. 提交休假申请
 async def handle_submit_leave_request(params: dict) -> dict:
-    import time as _time
-    request_id = f"LV-{int(_time.time())}"
+    adapter = get_hr_adapter()
     emp = get_current_employee()
+    created = adapter.submit_leave_request(
+        employee_id=emp["id"],
+        applicant=emp["name"],
+        leave_type=params.get("leave_type", "annual"),
+        start_date=params.get("start_date", ""),
+        end_date=params.get("end_date", ""),
+        reason=params.get("reason", ""),
+        approver=emp["manager"]
+    )
     return {
         "success": True,
         "data": {
-            "request_id": request_id,
+            "request_id": created.get("id"),
             "status": "pending_approval",
-            "approver": emp.manager,
+            "approver": emp["manager"],
             "leave_type": params.get("leave_type"),
             "start_date": params.get("start_date"),
             "end_date": params.get("end_date"),
-            "message": f"休假申请已提交，等待 {emp.manager} 审批",
+            "message": f"休假申请已提交，等待 {emp['manager']} 审批",
         },
     }
 
@@ -294,18 +308,11 @@ registry.register(
 
 # 6. 查询审批状态
 async def handle_query_approval_status(params: dict) -> dict:
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
     request_id = params.get("request_id")
-    if request_id:
-        return {
-            "success": True,
-            "data": {
-                "request_id": request_id,
-                "status": "pending_approval",
-                "current_approver": get_current_employee().manager,
-                "submitted_at": "2026-01-15T10:30:00",
-            },
-        }
-    return {"success": True, "data": {"approvals": mock_approvals}}
+    approvals = adapter.get_approvals(emp["id"], request_id)
+    return {"success": True, "data": {"approvals": approvals}}
 
 
 registry.register(
@@ -329,7 +336,7 @@ async def handle_calculate_travel_budget(params: dict) -> dict:
     days = int(params["days"])
     tier = params["city_tier"]
     emp = get_current_employee()
-    level = emp.level
+    level = emp["level"]
 
     accommodation = {
         "一线": {"P5": 400, "P6": 600, "P7": 600, "P8": 1000},
@@ -385,7 +392,7 @@ async def handle_generate_document(params: dict) -> dict:
         "data": {
             "document_id": doc_id,
             "type": params.get("doc_type"),
-            "employee": emp.name,
+            "employee": emp["name"],
             "status": "processing",
             "estimated_time": "1-2个工作日",
             "message": f"{params.get('doc_type')}申请已提交，预计1-2个工作日内完成",
@@ -409,3 +416,64 @@ registry.register(
     permission_level="confirmation",
     handler=handle_generate_document,
 )
+
+
+# 9. 创建 HR 服务工单 (Service Request / ServiceNow Sync)
+async def handle_create_hr_ticket(params: dict) -> dict:
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
+    category = params.get("category", "综合咨询")
+    title = params.get("title", "")
+    description = params.get("description", "")
+    priority = params.get("priority", "medium")
+
+    ticket = adapter.create_ticket(
+        employee_id=emp["id"],
+        applicant=emp["name"],
+        category=category,
+        title=title,
+        description=description,
+        priority=priority
+    )
+    ext_sync = f"（已同步外部工单: {ticket.get('external_system_id')}）" if ticket.get("external_system_id") else ""
+    return {
+        "success": True,
+        "data": {
+            "ticket_id": ticket.get("id"),
+            "category": category,
+            "title": title,
+            "priority": priority,
+            "status": "open",
+            "applicant": emp["name"],
+            "message": f"HR服务工单创建成功{ext_sync}，HR服务专员将在1个工作日内处理并联系您",
+            "external_id": ticket.get("external_system_id")
+        }
+    }
+
+
+registry.register(
+    name="create_hr_ticket",
+    description="创建 HR 服务工单（如社保公积金跨城转移、薪酬福利核算复议、工卡门禁补办、IT/行政支持诉求等），支持持久化及同步至 ServiceNow。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "工单分类",
+                "enum": ["社保公积金", "薪酬福利", "证明开具", "行政工卡", "综合咨询"]
+            },
+            "title": {"type": "string", "description": "工单简短标题"},
+            "description": {"type": "string", "description": "工单详细诉求与说明"},
+            "priority": {
+                "type": "string",
+                "description": "优先级",
+                "enum": ["low", "medium", "high", "urgent"]
+            },
+        },
+        "required": ["category", "title", "description"],
+    },
+    category="action",
+    permission_level="confirmation",
+    handler=handle_create_hr_ticket,
+)
+

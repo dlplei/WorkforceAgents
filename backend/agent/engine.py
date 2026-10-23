@@ -9,7 +9,7 @@ from datetime import datetime
 import httpx
 
 from config import LLMConfig, get_config
-from mock_data import get_current_employee
+from db.database import get_current_employee
 from agent.knowledge import retrieve_knowledge
 from agent.tools import registry
 
@@ -187,6 +187,7 @@ class AgentEngine:
 
                 yield {"type": "message_complete", "content": full_content}
                 yield {"type": "status", "content": "idle"}
+                logger.info(f"🎉 聊天响应处理完毕，已推送给前端 (共 {len(full_content)} 字符)")
                 return
 
             except Exception as e:
@@ -338,7 +339,10 @@ class AgentEngine:
                 except json.JSONDecodeError:
                     tc["function"]["arguments"] = "{}"
                 tool_calls.append(tc)
+            logger.info(f"🔧 响应流解析完成: 触发 {len(tool_calls)} 个工具调用")
             return {"content": full_content, "tool_calls": tool_calls}
+
+        logger.info(f"📝 响应流解析完成: 最终回复共 {len(full_content)} 字符")
 
         # 否则返回流式内容
         async def gen_chunks():

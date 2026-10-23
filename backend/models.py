@@ -88,6 +88,25 @@ class EmployeeProfile(BaseModel):
     leave_balance: LeaveBalance
     benefits: List[str]
 
+    def __getitem__(self, item: str):
+        return getattr(self, item)
+
+
+
+
+class HRTicket(BaseModel):
+    """HR 服务工单"""
+    id: str
+    employee_id: str
+    applicant: str
+    category: str
+    title: str
+    description: str
+    priority: str = "medium"
+    status: str = "open"
+    assigned_to: Optional[str] = None
+    created_at: Optional[str] = None
+    external_system_id: Optional[str] = None
 
 # ============ Knowledge 相关 ============
 

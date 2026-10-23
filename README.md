@@ -1,6 +1,6 @@
-# Workforce Operations Agent - MVP Demo
+# Workforce Operations Agent - Production MVP
 
-智能员工服务与人力运营 Agent，基于 FastAPI + React 的全栈实现。
+智能员工服务与人力运营 Agent，基于容器化微服务（PostgreSQL + Chroma + Ollama BGE）与 FastAPI + React 的全栈实现。
 
 ## 架构
 
@@ -49,6 +49,27 @@
 │
 └── README.md
 ```
+
+
+## 容器基础设施与数据库 (Podman / Docker)
+
+本系统采用生产级容器化微服务：
+- **PostgreSQL 18-alpine** (5432): 持久化员工档案、假期余额、日历日程、审批流与 HR 服务工单；
+- **Chroma 向量数据库** (8000): 存储企业 HR 政策与规章制度的密集向量切片；
+- **Ollama BGE-M3** (11434): 本地 1024 维密集语义向量生成模型。
+
+```bash
+# 启动持久化容器服务
+podman-compose up -d
+
+# 将企业政策知识库切片并向量化写入 Chroma
+python backend/agent/ingest_knowledge.py
+```
+
+### HR 适配器可插拔架构 (IHRServiceAdapter)
+支持通过环境变量无缝切换数据源：
+- `HR_ADAPTER_TYPE=local`：默认，使用本地 PostgreSQL 存储 HR 数据；
+- `HR_ADAPTER_TYPE=servicenow`：对接企业 ServiceNow PDI 实例（Table API / Incident / HR Case），并自动向本地 PostgreSQL 双写缓存。
 
 ## 快速开始
 

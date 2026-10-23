@@ -207,6 +207,8 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     { label: '📖 年假政策', prompt: '公司年假政策是怎样的？请3天以上需要怎么审批？' },
     { label: '✈️ 差旅预算', prompt: '我下周要去上海出差3天，帮我算一下差旅预算' },
     { label: '📋 开具证明', prompt: '我需要开一份在职证明，用于办理签证' },
+    { label: '🎫 提交服务工单', prompt: '我想咨询跨城市社保转移流程，请帮我创建一份 HR 服务工单' },
+    { label: '🔍 审批进度', prompt: '帮我查询一下我当前的审批单和流程进度' },
   ];
 
   return (

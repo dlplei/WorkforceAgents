@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/postgres:18-alpine
+    container_name: workforce_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - workforce_pg_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  chroma:
+    image: ghcr.io/chroma-core/chroma:latest
+    container_name: workforce_chroma
+    restart: unless-stopped
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    ports:
+      - "8002:8000"
+    volumes:
+      - workforce_chroma_data:/chroma/chroma
+
+volumes:
+  workforce_pg_data:
+  workforce_chroma_data:

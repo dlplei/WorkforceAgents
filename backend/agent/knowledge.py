@@ -1,9 +1,61 @@
 """
 RAG 知识库 - Mock 政策文档 + 检索器
 """
+import os
 import re
 from typing import List, Optional
+import httpx
+import chromadb
+from chromadb.config import Settings
 from models import PolicyDocument, KnowledgeChunk
+
+os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+CHROMA_HOST = os.getenv("CHROMA_HOST", "127.0.0.1")
+CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+COLLECTION_NAME = "hr_policy_collection"
+EMBEDDING_MODEL = "bge-m3"
+
+_chroma_client = None
+_chroma_collection = None
+
+
+def get_chroma_collection():
+    """获取或初始化 Chroma 向量集合"""
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is not None:
+        return _chroma_collection
+
+    try:
+        if _chroma_client is None:
+            _chroma_client = chromadb.HttpClient(
+                host=CHROMA_HOST,
+                port=CHROMA_PORT,
+                settings=Settings(allow_reset=True, anonymized_telemetry=False)
+            )
+        _chroma_collection = _chroma_client.get_or_create_collection(
+            name=COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"}
+        )
+        return _chroma_collection
+    except Exception as e:
+        print(f"[Knowledge] Failed to connect to Chroma: {e}")
+        return None
+
+
+def get_query_embedding(query: str) -> Optional[List[float]]:
+    """调用 Ollama 获取 Query 向量"""
+    try:
+        url = f"{OLLAMA_URL}/api/embeddings"
+        with httpx.Client(timeout=30.0, trust_env=False) as client:
+            resp = client.post(url, json={"model": EMBEDDING_MODEL, "prompt": query})
+            if resp.status_code == 200:
+                return resp.json()["embedding"]
+    except Exception as e:
+        print(f"[Knowledge] Ollama embedding failed: {e}")
+    return None
+
 
 
 # ============ Mock 政策文档 ============
@@ -253,12 +305,12 @@ def extract_relevant_paragraphs(content: str, query_tokens: List[str]) -> str:
     return "\n".join(top)
 
 
-def retrieve_knowledge(
+def _retrieve_by_keywords(
     query: str,
     top_k: int = 3,
     category_filter: Optional[str] = None,
 ) -> List[KnowledgeChunk]:
-    """检索知识库"""
+    """兜底：基于关键词匹配的本地检索"""
     query_lower = query.lower()
     query_tokens = tokenize(query_lower)
 
@@ -281,17 +333,12 @@ def retrieve_knowledge(
         title_lower = doc.title.lower()
 
         score = 0
-        # 标题匹配（高权重）
         for token in query_tokens:
             if token in title_lower:
                 score += 3
-
-        # 内容关键词匹配
         for token in query_tokens:
             matches = len(re.findall(re.escape(token), content_lower))
             score += matches
-
-        # 类别关键词加权
         for cat, keywords in category_keywords.items():
             if cat == doc.category:
                 for kw in keywords:
@@ -305,13 +352,64 @@ def retrieve_knowledge(
                     doc_id=doc.id,
                     title=doc.title,
                     content=relevant_content,
-                    score=score,
+                    score=float(score),
                     category=doc.category,
                 )
             )
 
     scored.sort(key=lambda x: x.score, reverse=True)
     return scored[:top_k]
+
+
+def retrieve_knowledge(
+    query: str,
+    top_k: int = 3,
+    category_filter: Optional[str] = None,
+) -> List[KnowledgeChunk]:
+    """
+    语义向量 RAG 检索器：
+    1. 优先使用 Ollama BGE-M3 生成向量并查询 Chroma
+    2. 支持 Cosine 相似度评分过滤
+    3. 发生网络或服务故障时无缝退回关键词匹配
+    """
+    try:
+        collection = get_chroma_collection()
+        if collection:
+            query_emb = get_query_embedding(query)
+            if query_emb:
+                where_filter = {"category": category_filter} if category_filter else None
+                results = collection.query(
+                    query_embeddings=[query_emb],
+                    n_results=top_k,
+                    where=where_filter,
+                    include=["documents", "metadatas", "distances"]
+                )
+                
+                docs = results.get("documents", [[]])[0]
+                metas = results.get("metadatas", [[]])[0]
+                distances = results.get("distances", [[]])[0]
+                
+                if docs:
+                    chunks = []
+                    for doc_text, meta, dist in zip(docs, metas, distances):
+                        # 余弦距离转为余弦相似度分数 (1.0 - distance)
+                        sim_score = max(0.0, round(1.0 - float(dist), 4))
+                        chunks.append(
+                            KnowledgeChunk(
+                                doc_id=meta.get("doc_id", "DOC"),
+                                title=meta.get("title", ""),
+                                content=doc_text,
+                                score=sim_score,
+                                category=meta.get("category", "")
+                            )
+                        )
+                    return chunks
+    except Exception as e:
+        print(f"[Knowledge] Vector retrieval fallback triggered: {e}")
+
+    # Fallback 到关键词检索
+    return _retrieve_by_keywords(query, top_k=top_k, category_filter=category_filter)
+
 
 
 def get_policy_categories() -> List[str]:

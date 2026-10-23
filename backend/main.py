@@ -4,6 +4,7 @@ Workforce Operations Agent - FastAPI Backend
 import json
 import logging
 from typing import Optional, List, Dict, Any
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -12,7 +13,9 @@ from pydantic import BaseModel
 from config import LLMConfig, update_config, get_config
 from agent.engine import AgentEngine
 from agent.tools import registry
-from mock_data import get_current_employee
+from db.database import get_current_employee, init_db
+from services.hr_adapter import get_hr_adapter
+
 
 # 配置日志
 logging.basicConfig(
@@ -27,10 +30,30 @@ logger = logging.getLogger(__name__)
 
 # ============ FastAPI App ============
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理（替代废弃的 on_event）"""
+    logger.info("=" * 60)
+    logger.info("🚀 Workforce Operations Agent 启动中...")
+    pg_ok = init_db()
+    logger.info(f"PostgreSQL connection status: {'SUCCESS' if pg_ok else 'FAILED'}")
+
+    logger.info("=" * 60)
+    logger.info(f"📦 已注册工具数量: {len(registry.get_all())}")
+    for tool in registry.get_all():
+        logger.info(f"   - {tool['name']}: {tool['description'][:50]}...")
+    logger.info("=" * 60)
+
+    yield
+
+    logger.info("👋 Workforce Operations Agent 已关闭")
+
+
 app = FastAPI(
     title="Workforce Operations Agent",
     description="智能员工服务与人力运营 Agent API",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS 配置（允许前端访问）
@@ -41,24 +64,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动事件"""
-    logger.info("=" * 60)
-    logger.info("🚀 Workforce Operations Agent 启动中...")
-    logger.info("=" * 60)
-    logger.info(f"📦 已注册工具数量: {len(registry.get_all())}")
-    for tool in registry.get_all():
-        logger.info(f"   - {tool['name']}: {tool['description'][:50]}...")
-    logger.info("=" * 60)
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭事件"""
-    logger.info("👋 Workforce Operations Agent 已关闭")
 
 
 # ============ Request/Response Models ============
@@ -104,6 +109,14 @@ async def get_tools():
         }
         for t in tools
     ]
+
+
+@app.get("/api/tickets")
+async def get_tickets(ticket_id: Optional[str] = None):
+    """获取当前员工的 HR 工单列表"""
+    emp = get_current_employee()
+    adapter = get_hr_adapter()
+    return adapter.get_tickets(emp.id, ticket_id)
 
 
 @app.post("/api/config")

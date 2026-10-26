@@ -22,7 +22,7 @@
 │                 │         │  - astream_events(v2) 全双工事件翻译                    │
 │                 │         │  - Tool Registry (9大 HR 运维工具)                      │
 │                 │         │  - RAG 向量知识库 (ChromaDB + Ollama BGE-M3 / 本地降级)  │
-│                 │         │  - PostgreSQL 18 持久化 & Mock 数据                    │
+│                 │         │  - PostgreSQL 18 持久化存储 (员工/假期/日程/工单)       │
 └─────────────────┘         └───────────────────────────┬────────────────────────────┘
                                                         │
                                                         ▼
@@ -40,9 +40,13 @@
 │   ├── main.py                 # FastAPI 入口
 │   ├── config.py               # 配置管理与环境变量
 │   ├── models.py               # Pydantic 数据模型
-│   ├── mock_data.py            # HR Mock 数据
 │   ├── requirements.txt        # Python 依赖（含 LangGraph, LangChain）
 │   ├── test_agent_regression.py # Agent 与 LangGraph 端到端回归测试
+│   ├── db/                     # PostgreSQL 数据持久层
+│   │   ├── database.py         # 数据库连接与 CRUD 操作
+│   │   └── init.sql            # 数据库表结构与初始化数据
+│   ├── services/               # 外部服务适配器
+│   │   └── hr_adapter.py       # IHRServiceAdapter (PostgreSQL / ServiceNow)
 │   └── agent/
 │       ├── graph.py            # LangGraph 状态机定义与工作流编排 (StateGraph)
 │       ├── engine.py           # Agent 核心引擎 (LangGraph 事件桥接与 SSE 转化)
@@ -67,7 +71,7 @@
 
 本系统采用生产级容器化微服务：
 - **PostgreSQL 18-alpine** (5432): 持久化员工档案、假期余额、日历日程、审批流与 HR 服务工单；
-- **Chroma 向量数据库** (8000): 存储企业 HR 政策与规章制度的密集向量切片；
+- **Chroma 向量数据库** (8002): 存储企业 HR 政策与规章制度的密集向量切片；
 - **Ollama BGE-M3** (11434): 本地 1024 维密集语义向量生成模型。
 
 ```bash

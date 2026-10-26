@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown } from 'lucide-react';
 import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, AppConfig } from '../types';
 
 interface Props {
@@ -27,10 +28,6 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || isRunning) return;
-    if (!config.apiKey) {
-      onOpenSettings();
-      return;
-    }
 
     const userMessage = input.trim();
     setInput('');
@@ -55,7 +52,8 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
 
     try {
       // Call backend API
-      const response = await fetch(`${config.backendUrl}/api/chat`, {
+      const backendBase = config.backendUrl || 'http://localhost:8000';
+      const response = await fetch(`${backendBase}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -66,8 +64,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
             .filter(m => m.content && m.content.trim().length > 0)
             .map(m => ({ role: m.role, content: m.content })),
           config: {
-            base_url: config.llmBaseUrl,  // LLM API 地址
-            api_key: config.apiKey,
+            ...(config.apiKey ? { api_key: config.apiKey } : {}),
             model: config.model,
             temperature: config.temperature,
             max_tokens: config.maxTokens,
@@ -217,7 +214,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-800/50">
         <div className="flex items-center space-x-3">
           <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-            <i className="fas fa-robot text-white text-sm"></i>
+            <Bot className="w-4 h-4 text-white" />
           </div>
           <div>
             <h2 className="text-sm font-semibold text-white">Workforce Agent</h2>
@@ -232,7 +229,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
             </span>
           )}
           <button onClick={handleClear} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="清空对话">
-            <i className="fas fa-trash-alt text-sm"></i>
+            <Trash2 className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -242,7 +239,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         {messages.length === 0 && !streamingContent && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="w-16 h-16 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-2xl flex items-center justify-center mb-4">
-              <i className="fas fa-robot text-3xl text-blue-400"></i>
+              <Bot className="w-8 h-8 text-blue-400" />
             </div>
             <h3 className="text-lg font-semibold text-white mb-2">你好，我是 Workforce Agent</h3>
             <p className="text-sm text-slate-400 mb-6 max-w-md">
@@ -270,9 +267,9 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         {isRunning && currentToolCalls.length > 0 && (
           <div className="flex items-start space-x-3">
             <div className="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
-              <i className={`fas fa-cogs text-xs text-purple-400 ${
+              <Cog className={`w-3.5 h-3.5 text-purple-400 ${
                 currentToolCalls.length > currentToolResults.length ? 'animate-spin' : ''
-              }`}></i>
+              }`} />
             </div>
             <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl rounded-tl-none px-4 py-3 max-w-lg">
               <p className="text-xs text-slate-400 mb-2">
@@ -296,7 +293,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
         {streamingContent && (
           <div className="flex items-start space-x-3">
             <div className="w-7 h-7 rounded-full bg-purple-500/20 flex items-center justify-center flex-shrink-0">
-              <i className="fas fa-robot text-xs text-purple-400"></i>
+              <Bot className="w-3.5 h-3.5 text-purple-400" />
             </div>
             <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl rounded-tl-none px-4 py-3 max-w-2xl">
               <div className="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">
@@ -319,7 +316,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={config.apiKey ? '输入你的问题... (Enter 发送, Shift+Enter 换行)' : '请先配置 API Key...'}
+              placeholder="输入你的问题... (Enter 发送, Shift+Enter 换行)"
               className="w-full bg-slate-900/50 border border-slate-600/50 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 resize-none"
               rows={1}
               disabled={isRunning}
@@ -330,7 +327,11 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
             disabled={!input.trim() || isRunning}
             className="p-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl transition-colors"
           >
-            <i className={`fas ${isRunning ? 'fa-spinner animate-spin' : 'fa-paper-plane'} text-sm`}></i>
+            {isRunning ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
@@ -349,7 +350,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${
         isUser ? 'bg-blue-500/20' : 'bg-purple-500/20'
       }`}>
-        <i className={`fas ${isUser ? 'fa-user text-blue-400' : 'fa-robot text-purple-400'} text-xs`}></i>
+        {isUser ? (
+          <User className="w-3.5 h-3.5 text-blue-400" />
+        ) : (
+          <Bot className="w-3.5 h-3.5 text-purple-400" />
+        )}
       </div>
       <div className={`rounded-xl px-4 py-3 max-w-2xl ${
         isUser
@@ -362,9 +367,9 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               onClick={() => setShowTools(!showTools)}
               className="text-xs text-purple-300 hover:text-purple-200 flex items-center space-x-1 cursor-pointer"
             >
-              <i className="fas fa-tools text-xs"></i>
+              <Wrench className="w-3 h-3" />
               <span>已调用 {message.toolCalls.length} 个工具</span>
-              <i className={`fas fa-chevron-${showTools ? 'up' : 'down'} text-[10px] ml-1`}></i>
+              {showTools ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
             </button>
             {showTools && (
               <div className="mt-2 p-2 bg-slate-900/60 rounded border border-slate-700/40 text-xs font-mono space-y-1">

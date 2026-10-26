@@ -46,9 +46,18 @@ logger.info("=" * 60)
 
 
 def update_config(config: LLMConfig):
-    """更新全局配置"""
+    """更新全局配置（空字段保留 .env 默认值）"""
     global current_config
-    current_config = config
+    if config.base_url and config.base_url.strip():
+        current_config.base_url = config.base_url.strip()
+    if config.api_key and config.api_key.strip():
+        current_config.api_key = config.api_key.strip()
+    if config.model and config.model.strip():
+        current_config.model = config.model.strip()
+    if config.temperature is not None:
+        current_config.temperature = config.temperature
+    if config.max_tokens is not None and config.max_tokens > 0:
+        current_config.max_tokens = config.max_tokens
 
 
 def get_config() -> LLMConfig:

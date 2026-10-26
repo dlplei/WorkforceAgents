@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Settings, X, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import type { AppConfig } from '../types';
 import { saveConfig } from '../config';
 
@@ -24,48 +25,34 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
           <h2 className="text-lg font-semibold text-white flex items-center">
-            <i className="fas fa-cog text-slate-400 mr-2"></i>
-            配置
+            <Settings className="w-5 h-5 text-slate-400 mr-2" />
+            模型运行参数设置
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
-            <i className="fas fa-times"></i>
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Form */}
         <div className="px-6 py-5 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">后端地址 (Backend URL)</label>
-            <input
-              type="text"
-              value={form.backendUrl}
-              onChange={(e) => setForm({ ...form, backendUrl: e.target.value })}
-              placeholder="http://localhost:8000"
-              className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
-            />
-            <p className="text-xs text-slate-500 mt-1">本地 FastAPI 后端服务地址（默认 http://localhost:8000）</p>
+          <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-300 flex items-start space-x-2.5">
+            <CheckCircle2 className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
+            <div className="leading-relaxed">
+              <span className="font-semibold text-white">系统环境配置生效中：</span>
+              后端服务地址及 LLM API 地址已统一直接由后端的 <code className="bg-slate-900/80 px-1 py-0.5 rounded text-blue-200">.env</code> 文件接管管理，无需在前端手动输入。
+            </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">LLM API 地址 (LLM Base URL)</label>
-            <input
-              type="text"
-              value={form.llmBaseUrl}
-              onChange={(e) => setForm({ ...form, llmBaseUrl: e.target.value })}
-              placeholder="https://api.openai.com/v1"
-              className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
-            />
-            <p className="text-xs text-slate-500 mt-1">OpenAI 兼容的 LLM API 服务地址（会传递给后端）</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">LLM API Key</label>
+            <label className="block text-sm font-medium text-slate-300 mb-1.5">
+              LLM API Key <span className="text-xs text-slate-500 font-normal">（可选，留空则默认使用 .env 中的配置）</span>
+            </label>
             <div className="relative">
               <input
                 type={showKey ? 'text' : 'password'}
                 value={form.apiKey}
                 onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
-                placeholder="sk-..."
+                placeholder="使用 .env 中配置的 API Key"
                 className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 pr-10 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
               />
               <button
@@ -73,20 +60,20 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
                 onClick={() => setShowKey(!showKey)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
               >
-                <i className={`fas ${showKey ? 'fa-eye-slash' : 'fa-eye'} text-sm`}></i>
+                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <p className="text-xs text-slate-500 mt-1">OpenAI 兼容 API 的 Key，会传递给后端</p>
+            <p className="text-xs text-slate-500 mt-1">若需临时切换特定调试 Key 可在此输入</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">模型</label>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">模型 (Model)</label>
               <input
                 type="text"
                 value={form.model}
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
-                placeholder="gpt-4o-mini"
+                placeholder="gemini-3.7-flash"
                 className="w-full bg-slate-900/50 border border-slate-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
               />
             </div>
@@ -128,8 +115,7 @@ export default function SettingsModal({ config, onSave, onClose }: Props) {
           </button>
           <button
             onClick={handleSave}
-            disabled={!form.apiKey}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-colors"
+            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-medium shadow-md shadow-blue-500/20"
           >
             保存配置
           </button>

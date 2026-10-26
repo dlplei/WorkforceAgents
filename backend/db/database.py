@@ -15,9 +15,9 @@ os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 PG_HOST = os.getenv("POSTGRES_HOST", "127.0.0.1")
 PG_PORT = os.getenv("POSTGRES_PORT", "5432")
-PG_USER = os.getenv("POSTGRES_USER", "workforce")
-PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "workforce123")
-PG_DB = os.getenv("POSTGRES_DB", "workforce_db")
+PG_USER = os.getenv("POSTGRES_USER", "")
+PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+PG_DB = os.getenv("POSTGRES_DB", "")
 
 DB_CONN_STR = f"postgresql://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
 DEFAULT_EMPLOYEE_ID = "E10293"

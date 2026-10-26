@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Menu, Bot, Settings } from 'lucide-react';
 import type { AppConfig } from './types';
 import { loadConfig, defaultConfig } from './config';
 import ChatInterface from './components/ChatInterface';
@@ -14,9 +15,6 @@ export default function App() {
   useEffect(() => {
     const saved = loadConfig();
     setConfig(saved);
-    if (!saved.apiKey) {
-      setShowSettings(true);
-    }
   }, []);
 
   return (
@@ -28,11 +26,11 @@ export default function App() {
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
           >
-            <i className="fas fa-bars text-sm"></i>
+            <Menu className="w-4 h-4" />
           </button>
           <div className="flex items-center space-x-2">
             <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <i className="fas fa-robot text-white text-xs"></i>
+              <Bot className="w-4 h-4 text-white" />
             </div>
             <div>
               <h1 className="text-sm font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent leading-tight">
@@ -45,11 +43,9 @@ export default function App() {
 
         <div className="flex items-center space-x-2">
           {/* Status indicator */}
-          <div className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs ${
-            config.apiKey ? 'bg-green-500/10 text-green-400' : 'bg-amber-500/10 text-amber-400'
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${config.apiKey ? 'bg-green-400' : 'bg-amber-400'}`}></span>
-            <span>{config.apiKey ? '已连接' : '未配置'}</span>
+          <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs bg-green-500/10 text-green-400">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+            <span>已就绪 (.env)</span>
           </div>
 
           {/* Model badge */}
@@ -63,7 +59,7 @@ export default function App() {
             className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors"
             title="API 配置"
           >
-            <i className="fas fa-cog text-sm"></i>
+            <Settings className="w-4 h-4" />
           </button>
         </div>
       </header>

@@ -16,7 +16,7 @@ os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 CHROMA_HOST = os.getenv("CHROMA_HOST", "127.0.0.1")
-CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8000"))
+CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8002"))
 COLLECTION_NAME = "hr_policy_collection"
 EMBEDDING_MODEL = "bge-m3"
 
@@ -30,7 +30,7 @@ def get_embedding(text: str) -> List[float]:
         return resp.json()["embedding"]
 
 
-def chunk_document(doc_id: str, title: str, category: str, content: str) -> List[Dict[str, Any]]:
+def chunk_document(doc_id: str, title: str, category: str, content: str, effective_date: str = "") -> List[Dict[str, Any]]:
     """按条款/章节切分文档"""
     chunks = []
     # 按照 "一、"、"二、" 等条款章节分割
@@ -46,6 +46,7 @@ def chunk_document(doc_id: str, title: str, category: str, content: str) -> List
             "doc_id": doc_id,
             "title": title,
             "category": category,
+            "effective_date": effective_date,
             "content": chunk_text
         })
         chunk_index += 1
@@ -53,7 +54,7 @@ def chunk_document(doc_id: str, title: str, category: str, content: str) -> List
 
 
 def ingest():
-    """执行知识库向量化入库"""
+    """执行知识库向量化入库（读取 backend/data/policies/*.md）"""
     from knowledge import policy_documents
 
     print(f"Connecting to Chroma at {CHROMA_HOST}:{CHROMA_PORT}...")
@@ -72,10 +73,10 @@ def ingest():
     # 统计切片
     all_chunks = []
     for doc in policy_documents:
-        chunks = chunk_document(doc.id, doc.title, doc.category, doc.content)
+        chunks = chunk_document(doc.id, doc.title, doc.category, doc.content, getattr(doc, "effective_date", ""))
         all_chunks.extend(chunks)
 
-    print(f"Total chunks to ingest: {len(all_chunks)}")
+    print(f"Total chunks to ingest: {len(all_chunks)} (from {len(policy_documents)} Markdown policies)")
     
     ids = []
     documents = []
@@ -93,7 +94,8 @@ def ingest():
         metadatas.append({
             "doc_id": c["doc_id"],
             "title": c["title"],
-            "category": c["category"]
+            "category": c["category"],
+            "effective_date": c.get("effective_date", ""),
         })
         embeddings.append(emb)
 

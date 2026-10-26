@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Monitor, Server, Brain, BookOpen, Zap } from 'lucide-react';
 import type { AppConfig, ToolInfo } from '../types';
 import { currentEmployee } from '../config';
 
@@ -104,14 +105,14 @@ export default function Sidebar({ config }: Props) {
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">系统架构</h3>
         <div className="space-y-2">
           {[
-            { label: '前端', value: 'React + Vite', icon: 'fa-react' },
-            { label: '后端', value: 'FastAPI + Python', icon: 'fa-python' },
-            { label: '引擎', value: 'ReAct + Tool Calling', icon: 'fa-brain' },
-            { label: '知识库', value: 'Mock RAG (7篇政策)', icon: 'fa-book' },
-            { label: '通信', value: 'SSE Streaming', icon: 'fa-bolt' },
+            { label: '前端', value: 'React + Vite', Icon: Monitor },
+            { label: '后端', value: 'FastAPI + Python', Icon: Server },
+            { label: '引擎', value: 'ReAct + Tool Calling', Icon: Brain },
+            { label: '知识库', value: 'Mock RAG (7篇政策)', Icon: BookOpen },
+            { label: '通信', value: 'SSE Streaming', Icon: Zap },
           ].map((item) => (
             <div key={item.label} className="flex items-center space-x-2 text-xs">
-              <i className={`fas ${item.icon} text-slate-500 w-4`}></i>
+              <item.Icon className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
               <span className="text-slate-400">{item.label}:</span>
               <span className="text-slate-300">{item.value}</span>
             </div>

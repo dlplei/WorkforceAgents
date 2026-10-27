@@ -52,7 +52,8 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
 
     try {
       // Call backend API
-      const backendBase = config.backendUrl || 'http://localhost:8000';
+      // 留空时走同源相对路径（由 Vite dev proxy 转发到后端），避免跨域 / 浏览器代理挂起
+      const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
       const response = await fetch(`${backendBase}/api/chat`, {
         method: 'POST',
         headers: {

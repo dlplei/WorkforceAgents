@@ -14,8 +14,9 @@ export default function Sidebar({ config }: Props) {
   useEffect(() => {
     const fetchTools = async () => {
       try {
-        console.log('Fetching tools from:', `${config.backendUrl}/api/tools`);
-        const response = await fetch(`${config.backendUrl}/api/tools`);
+        console.log('Fetching tools from:', `${(config.backendUrl || '').replace(/\/+$/, '')}/api/tools`);
+        const base = (config.backendUrl || '').replace(/\/+$/, '');
+        const response = await fetch(`${base}/api/tools`);
         if (response.ok) {
           const data = await response.json();
           console.log('Tools loaded:', data.length);

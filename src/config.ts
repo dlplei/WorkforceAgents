@@ -12,7 +12,9 @@ export interface AppConfig {
 }
 
 export const defaultConfig: AppConfig = {
-  backendUrl: 'http://localhost:8000',
+  // 默认留空 => 前端用相对路径 /api/*，由 Vite dev server 代理到后端（同源、无 CORS、不受浏览器代理影响）。
+  // 如需直连后端，可在设置面板填入 http://localhost:8000
+  backendUrl: '',
   llmBaseUrl: 'https://api.openai.com/v1',
   apiKey: '',
   model: 'gpt-4o-mini',

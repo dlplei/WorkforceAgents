@@ -68,7 +68,45 @@ def get_query_embedding(query: str) -> Optional[List[float]]:
 
 # ============ 政策文档加载器 (Data Layer) ============
 
-POLICIES_DIR = Path(os.getenv("POLICIES_DIR", Path(__file__).resolve().parent.parent / "data" / "policies"))
+def _resolve_policies_dir() -> Path:
+    default_dir = Path(__file__).resolve().parent.parent / "data" / "policies"
+    env_dir = os.getenv("POLICIES_DIR")
+    if not env_dir:
+        return default_dir
+
+    p = Path(env_dir)
+    # 1. 绝对路径且存在
+    if p.is_absolute() and p.exists():
+        return p
+
+    # 2. 相对于当前执行目录存在
+    if p.exists():
+        return p.resolve()
+
+    # 3. 常见情况：在 backend 目录下执行，但 env 配置了 ./backend/data/policies
+    backend_dir = Path(__file__).resolve().parent.parent
+    if (backend_dir / p).exists():
+        return (backend_dir / p).resolve()
+
+    try:
+        rel_parts = list(p.parts)
+        if rel_parts and rel_parts[0] in (".", ""):
+            rel_parts = rel_parts[1:]
+        if rel_parts and rel_parts[0] == "backend":
+            sub_path = Path(*rel_parts[1:])
+            if (backend_dir / sub_path).exists():
+                return (backend_dir / sub_path).resolve()
+    except Exception:
+        pass
+
+    # 4. 回退到基于 __file__ 定位的绝对路径
+    if default_dir.exists():
+        return default_dir
+
+    return p
+
+
+POLICIES_DIR = _resolve_policies_dir()
 
 
 def parse_markdown_policy(file_path: Path) -> Optional[PolicyDocument]:

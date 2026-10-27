@@ -2,9 +2,14 @@
 
 ## 快速定位：页面一直 "Waiting for 127.0.0.1:3000"（白屏不出画面）
 
-> **最常见原因不是项目代码，而是浏览器/系统代理把本地请求劫持了。**
-> 判断方法：在运行前端的同一台机器上执行 `curl -sI http://127.0.0.1:3000/`，
-> 若**秒回 HTTP 200**，说明 Vite 服务本身没问题 → 请优先检查下面第 1 条（代理 bypass）。
+> **已彻底定位并修复根本原因：**
+> 1. **真正根因（Tailwind CSS v4 扫描遍历 Python venv 死锁卡顿）**：
+>    `@tailwindcss/vite` 默认开启全局自动 source 扫描，首次请求 `index.css` 时会递归扫描整个工作区。根目录下的 `backend/venv` 包含近 20,000 个 Python 文件，在 Windows 下冷扫描耗时长达 **52 秒**！
+>    已在 `src/index.css` 中配置 `@import "tailwindcss" source(none);` 并显式声明前端源路径，编译耗时从 52s 缩短至 **0.1s**。
+> 2. **Edge 控制台 CSP 报错的误导假象**：
+>    Edge 控制台看到的 `Executing inline event handler violates the following Content Security Policy... {"id":38002,"company":"IBM"...}` 并不是你项目的报错，而是 Edge 自带的 **IBM 企业新标签页** 的代码报错。因为页面在等待 52 秒未响应期间尚未发生 Navigation，控制台保留了新标签页的错误。
+> 3. **网络与系统代理 bypass**：
+>    在企业代理环境下，确保 `localhost`、`127.0.0.1`、`::1`、`[::1]` 均已加入代理白名单。
 
 详见下方 **0.9 节**（含完整排查清单与自检脚本）。
 
@@ -12,66 +17,6 @@
 
 ## 常见错误及解决方案
 
-### 0.9 页面长时间白屏 / 浏览器一直显示 "Waiting for http://127.0.0.1:3000 ..."
-
-**症状：**
-`npm run dev` 和后端都正常启动（终端里能看到 `VITE v6.x ready`），但浏览器打开
-`http://127.0.0.1:3000/` 或 `http://localhost:3000/` 时长时间不出画面，状态栏一直是
-"Waiting for 127.0.0.1:3000…" / "正在等待站点响应"。
-
-**按可能性从高到低排查：**
-
-1. **浏览器/系统代理劫持了本地请求（最常见）**
-   - 表现：`curl http://127.0.0.1:3000/` 秒回 200，但浏览器一直 Waiting；
-     或 curl 走代理时也卡住。开了 Clash / v2rayN / 公司 PAC 代理时尤其常见。
-   - 解决：把 `127.0.0.1`、`localhost`、`::1` 加入代理 **bypass（不使用代理的主机）** 列表；
-     或临时关闭代理再刷新；或使用浏览器的无痕/直连配置档。
-   - 命令行验证是否被代理影响：
-     ```bash
-     env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY        curl -sv -o /dev/null http://127.0.0.1:3000/
-     ```
-   - 本项目已在 `vite.config.js` 中加了 `/api` dev proxy，前端默认用**同源相对路径**
-     请求后端（见下一条），可顺带消除跨域与二次代理问题。
-
-2. **首次访问触发 Vite 依赖预打包（optimize deps）阻塞**
-   - 表现：第一次打开慢，控制台出现
-     `new dependencies optimized: react, react-dom, lucide-react ...` 后页面重新加载。
-   - 若 `node_modules` 是中断/不完整安装留下的，预打包会一直失败重试 → 永远 Waiting。
-   - 解决：
-     ```bash
-     rm -rf node_modules/.vite node_modules
-     npm install
-     npm run dev -- --force
-     ```
-   - 本项目已在 `vite.config.js` 的 `optimizeDeps.include` 中显式列出全部依赖，避免运行时才发现。
-
-3. **只监听了 127.0.0.1，而 `localhost` 解析成 IPv6 `::1`**
-   - 老配置 `server.host: "127.0.0.1"` + `hmr.host: "127.0.0.1"` 会导致
-     `http://localhost:3000/` 连不上、HMR websocket 也连不上（表现为一直转圈）。
-   - 现已改为 `host: true`（同时监听 IPv4/IPv6）+ `hmr.clientPort`，两种地址都能访问。
-   - 注意：从其它机器/容器外访问时要用 `http://<宿主机IP>:3000/`，而不是 `localhost`。
-
-4. **端口被别的进程占用**（`strictPort: true` 时 Vite 会直接报错退出，不会静默挂起）
-   ```bash
-   # Linux/macOS
-   lsof -i :3000        # 或 ss -ltnp | grep 3000
-   # Windows
-   netstat -ano | findstr :3000
-   ```
-
-5. **前端把 LLM 地址填进了"后端地址"**（见 0.5 节）→ 请求打到远端不可达地址上长时间 pending。
-   现在"后端地址"留空即可，前端会走同源 `/api/*` 由 Vite 转发到 `http://127.0.0.1:8000`。
-
-**快速自检脚本（在服务器上跑，全部应为 200 且毫秒级返回）：**
-```bash
-for u in http://127.0.0.1:3000/ http://localhost:3000/ \
-         http://127.0.0.1:3000/src/main.tsx \
-         http://127.0.0.1:3000/node_modules/.vite/deps/react-dom_client.js \
-         http://127.0.0.1:3000/api/tools; do
-  echo -n "$u -> "; curl -s -m 10 -o /dev/null -w "%{http_code} %{time_total}s\n" "$u"
-done
-```
-如果这些都快、只有浏览器慢，那 100% 是浏览器侧的代理/扩展/DNS 问题，与项目代码无关。
 
 ### 0.5. CORS 错误 / NetworkError（配置混淆）
 

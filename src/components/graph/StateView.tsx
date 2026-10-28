@@ -6,7 +6,7 @@ interface Props {
   topology: GraphTopology | null;
   copiedMermaid: boolean;
   onCopyMermaid: () => void;
-  config: AppConfig;
+  config?: AppConfig;
 }
 
 export default function StateView({
@@ -65,11 +65,11 @@ export default function StateView({
           </div>
           <div className="p-2 bg-slate-900/60 rounded border border-slate-800">
             <span className="text-slate-400 block text-[10px]">当前模型</span>
-            <span className="text-slate-200 font-mono truncate block">{config.model}</span>
+            <span className="text-slate-200 font-mono truncate block">{config?.model || 'gpt-4o-mini'}</span>
           </div>
           <div className="p-2 bg-slate-900/60 rounded border border-slate-800">
             <span className="text-slate-400 block text-[10px]">温度系数</span>
-            <span className="text-slate-200 font-mono">{config.temperature}</span>
+            <span className="text-slate-200 font-mono">{config?.temperature ?? 0.7}</span>
           </div>
         </div>
       </div>

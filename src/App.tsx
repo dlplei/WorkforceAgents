@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Menu, Bot, Settings, Layers } from 'lucide-react';
+import { Menu, Bot, Settings, Layers, Workflow } from 'lucide-react';
 import type { AppConfig, ChatMessage } from './types';
 import { loadConfig, defaultConfig } from './config';
 import ChatInterface from './components/ChatInterface';
@@ -17,6 +17,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showGraph, setShowGraph] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activePrompt, setActivePrompt] = useState<string>('');
 
@@ -151,6 +152,20 @@ export default function App() {
             <span className="hidden md:inline">架构与工具</span>
           </button>
 
+          {/* LangGraph 状态机拓扑监控入口 */}
+          <button
+            onClick={() => setShowGraph((prev) => !prev)}
+            className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-colors border ${
+              showGraph
+                ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                : 'text-slate-400 hover:text-white hover:bg-slate-700/60 border-slate-700/50'
+            }`}
+            title="展开/收起 LangGraph 状态机拓扑监控"
+          >
+            <Workflow className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">LangGraph 拓扑</span>
+          </button>
+
           {/* Settings button */}
           <button
             onClick={() => setShowSettings(true)}
@@ -189,6 +204,8 @@ export default function App() {
             initialPrompt={activePrompt}
             onClearInitialPrompt={() => setActivePrompt('')}
             onFirstMessageSent={handleFirstMessageSent}
+            showGraph={showGraph}
+            setShowGraph={setShowGraph}
           />
         </div>
       </div>

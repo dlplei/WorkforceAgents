@@ -17,19 +17,19 @@ import ModalGraphView from './graph/ModalGraphView';
 export interface GraphInspectorProps {
   activeNode: string;
   isRunning: boolean;
-  traceSteps: ExecutionStep[];
-  currentToolCalls: ToolCallInfo[];
-  currentToolResults: ToolResultInfo[];
+  traceSteps?: ExecutionStep[];
+  currentToolCalls?: ToolCallInfo[];
+  currentToolResults?: ToolResultInfo[];
   onClose?: () => void;
-  config: AppConfig;
+  config?: AppConfig;
 }
 
 export default function GraphInspector({
   activeNode,
   isRunning,
-  traceSteps,
-  currentToolCalls,
-  currentToolResults,
+  traceSteps = [],
+  currentToolCalls = [],
+  currentToolResults = [],
   onClose,
   config,
 }: GraphInspectorProps) {
@@ -43,7 +43,7 @@ export default function GraphInspector({
   useEffect(() => {
     const fetchTopology = async () => {
       try {
-        const base = (config.backendUrl || '').replace(/\/+$/, '');
+        const base = (config?.backendUrl || '').replace(/\/+$/, '');
         const res = await fetch(`${base}/api/graph`);
         if (res.ok) {
           const data: GraphTopology = await res.json();
@@ -56,7 +56,7 @@ export default function GraphInspector({
       }
     };
     fetchTopology();
-  }, [config.backendUrl]);
+  }, [config?.backendUrl]);
 
   useEffect(() => {
     if (activeNode && NODE_DEFINITIONS[activeNode]) {

@@ -60,7 +60,7 @@ export default function AboutModal({ config, onClose }: Props) {
               {[
                 { label: '前端界面', value: 'React 18 + Vite + Tailwind CSS', Icon: Monitor },
                 { label: '服务后端', value: 'FastAPI + Python 3.10+ (Uvicorn)', Icon: Server },
-                { label: '智能体引擎', value: 'ReAct 范式 + Tool Calling 驱动', Icon: Brain },
+                { label: '智能体引擎', value: 'LangGraph 状态机 (StateGraph 驱动)', Icon: Brain },
                 { label: '知识检索', value: 'Mock RAG (7篇 HR/出差政策库)', Icon: BookOpen },
                 { label: '实时通信', value: 'SSE (Server-Sent Events) 流式', Icon: Zap },
                 { label: '权限安全', value: '敏感操作确认与权限分级拦截', Icon: ShieldCheck },

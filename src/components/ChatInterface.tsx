@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown } from 'lucide-react';
-import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, AppConfig } from '../types';
+import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow } from 'lucide-react';
+import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig } from '../types';
+import GraphInspector from './GraphInspector';
 
 interface Props {
   config: AppConfig;
@@ -10,6 +11,8 @@ interface Props {
   initialPrompt?: string;
   onClearInitialPrompt?: () => void;
   onFirstMessageSent?: (content: string) => void;
+  showGraph?: boolean;
+  setShowGraph?: (show: boolean | ((prev: boolean) => boolean)) => void;
 }
 
 export default function ChatInterface({
@@ -20,13 +23,20 @@ export default function ChatInterface({
   initialPrompt,
   onClearInitialPrompt,
   onFirstMessageSent,
+  showGraph,
+  setShowGraph,
 }: Props) {
+  const [internalShowGraph, setInternalShowGraph] = useState(true);
+  const isGraphOpen = showGraph !== undefined ? showGraph : internalShowGraph;
+  const setIsGraphOpen = setShowGraph || setInternalShowGraph;
+
   const [input, setInput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
   const [currentToolResults, setCurrentToolResults] = useState<ToolResultInfo[]>([]);
   const [streamingContent, setStreamingContent] = useState('');
   const [activeNode, setActiveNode] = useState<string>('');
+  const [traceSteps, setTraceSteps] = useState<ExecutionStep[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -61,6 +71,16 @@ export default function ChatInterface({
     toolResultsRef.current = [];
     setCurrentToolCalls([]);
     setCurrentToolResults([]);
+    setTraceSteps([
+      {
+        id: `step-${Date.now()}-start`,
+        node: '__start__',
+        timestamp: Date.now(),
+        duration: 12,
+        status: 'completed',
+        summary: '接收用户提问并注入员工上下文 (张明 E10293)',
+      },
+    ]);
 
     // Add user message
     const userMsg: ChatMessage = {
@@ -157,47 +177,118 @@ export default function ChatInterface({
     switch (event.type) {
       case 'status':
         break;
-      case 'node_enter':
-        setActiveNode(event.content);
+      case 'node_enter': {
+        const nodeName = event.content;
+        setActiveNode(nodeName);
+        const nodeSummaries: Record<string, string> = {
+          knowledge_retrieval: '检索企业制度向量知识切片 (RAG)',
+          reasoning: 'ReAct 规划决策与工具路由',
+          tool_execution: '准备执行具体企业业务工具',
+          response_generation: '大模型逐字流式打字输出',
+        };
+        setTraceSteps((prev) => [
+          ...prev,
+          {
+            id: `step-${Date.now()}-${nodeName}`,
+            node: nodeName,
+            timestamp: Date.now(),
+            status: 'running',
+            summary: nodeSummaries[nodeName] || `进入节点 ${nodeName}`,
+          },
+        ]);
         break;
-      case 'node_exit':
+      }
+      case 'node_exit': {
         setActiveNode('');
+        setTraceSteps((prev) =>
+          prev.map((s, idx) =>
+            idx === prev.length - 1 && s.status === 'running'
+              ? { ...s, status: 'completed', duration: Math.max(10, Date.now() - s.timestamp) }
+              : s
+          )
+        );
         break;
-      case 'tool_call':
-        toolCallsRef.current.push(event.data);
+      }
+      case 'tool_call': {
+        const toolCall = event.data;
+        toolCallsRef.current.push(toolCall);
         setCurrentToolCalls([...toolCallsRef.current]);
+        setTraceSteps((prev) => [
+          ...prev,
+          {
+            id: `step-${Date.now()}-tool-${toolCall.name}`,
+            node: 'tool_execution',
+            timestamp: Date.now(),
+            status: 'running',
+            summary: `调用业务工具: ${toolCall.name}`,
+            toolCall,
+          },
+        ]);
         break;
-      case 'tool_result':
-        toolResultsRef.current.push(event.data);
+      }
+      case 'tool_result': {
+        const toolResult = event.data;
+        toolResultsRef.current.push(toolResult);
         setCurrentToolResults([...toolResultsRef.current]);
+        setTraceSteps((prev) =>
+          prev.map((s) =>
+            s.toolCall?.name === toolResult.tool_name && s.status === 'running'
+              ? {
+                  ...s,
+                  status: toolResult.success ? 'completed' : 'failed',
+                  duration: Math.round(toolResult.execution_time * 1000),
+                  toolResult,
+                }
+              : s
+          )
+        );
         break;
+      }
       case 'token':
-        setStreamingContent(prev => prev + event.content);
+        setStreamingContent((prev) => prev + event.content);
         break;
-      case 'message_complete':
-        setMessages(prev => [...prev, {
-          id: `assistant-${Date.now()}`,
-          role: 'assistant',
-          content: event.content,
-          timestamp: Date.now(),
-          toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
-          toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
-        }]);
+      case 'message_complete': {
+        setTraceSteps((prev) => [
+          ...prev.map((s) => (s.status === 'running' ? { ...s, status: 'completed' as const } : s)),
+          {
+            id: `step-${Date.now()}-end`,
+            node: '__end__',
+            timestamp: Date.now(),
+            duration: 10,
+            status: 'completed',
+            summary: '状态机流转完成，输出已归档',
+          },
+        ]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            role: 'assistant',
+            content: event.content,
+            timestamp: Date.now(),
+            toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
+            toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
+          },
+        ]);
         setStreamingContent('');
         setCurrentToolCalls([]);
         setCurrentToolResults([]);
         toolCallsRef.current = [];
         toolResultsRef.current = [];
         break;
+      }
       case 'error':
-        setMessages(prev => [...prev, {
-          id: `error-${Date.now()}`,
-          role: 'assistant',
-          content: `❌ ${event.content}`,
-          timestamp: Date.now(),
-          toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
-          toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
-        }]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `error-${Date.now()}`,
+            role: 'assistant',
+            content: `❌ ${event.content}`,
+            timestamp: Date.now(),
+            toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
+            toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
+          },
+        ]);
         setStreamingContent('');
         setCurrentToolCalls([]);
         setCurrentToolResults([]);
@@ -221,6 +312,7 @@ export default function ChatInterface({
     setCurrentToolResults([]);
     toolCallsRef.current = [];
     toolResultsRef.current = [];
+    setTraceSteps([]);
     // Note: Backend conversation history is not cleared in this demo
   };
 
@@ -234,30 +326,44 @@ export default function ChatInterface({
   ];
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-800/50">
-        <div className="flex items-center space-x-3">
-          <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-            <Bot className="w-4 h-4 text-white" />
+    <div className="flex h-full w-full overflow-hidden">
+      {/* Main Chat Column */}
+      <div className="flex-1 flex flex-col min-w-0 h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/50 bg-slate-800/50">
+          <div className="flex items-center space-x-3">
+            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <Bot className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-white">Workforce Agent</h2>
+              <p className="text-xs text-slate-400">智能员工服务助手</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm font-semibold text-white">Workforce Agent</h2>
-            <p className="text-xs text-slate-400">智能员工服务助手</p>
+          <div className="flex items-center space-x-2">
+            {isRunning && (
+              <span className="text-xs text-cyan-400 flex items-center space-x-1">
+                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse"></span>
+                <span>{getNodeLabel(activeNode)}</span>
+              </span>
+            )}
+            <button
+              onClick={() => setIsGraphOpen(!isGraphOpen)}
+              className={`flex items-center space-x-1.5 px-2.5 py-1 text-xs rounded-lg transition-colors border ${
+                isGraphOpen
+                  ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/40'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-700/60 border-slate-700/50'
+              }`}
+              title="切换 LangGraph 状态机拓扑监控"
+            >
+              <Workflow className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">状态图</span>
+            </button>
+            <button onClick={handleClear} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="清空对话">
+              <Trash2 className="w-4 h-4" />
+            </button>
           </div>
         </div>
-        <div className="flex items-center space-x-2">
-          {isRunning && (
-            <span className="text-xs text-cyan-400 flex items-center space-x-1">
-              <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse"></span>
-              <span>{getNodeLabel(activeNode)}</span>
-            </span>
-          )}
-          <button onClick={handleClear} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="清空对话">
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -360,6 +466,20 @@ export default function ChatInterface({
           </button>
         </div>
       </div>
+    </div>
+
+      {/* LangGraph Inspector Right Panel */}
+      {isGraphOpen && (
+        <GraphInspector
+          activeNode={activeNode}
+          isRunning={isRunning}
+          traceSteps={traceSteps}
+          currentToolCalls={currentToolCalls}
+          currentToolResults={currentToolResults}
+          onClose={() => setIsGraphOpen(false)}
+          config={config}
+        />
+      )}
     </div>
   );
 }

@@ -69,8 +69,8 @@ def build_system_prompt() -> str:
 5. 信息查询：查询员工信息、审批状态等
 
 ## 工作原则
-1. **Policy Grounding**：回答政策问题时，必须基于检索到的政策原文，不可编造
-2. **引用来源**：回答时标注政策依据（如"根据《员工年假管理办法》第X条"）
+1. **Policy Grounding**：回答政策问题时，必须基于检索到的政策原文，不可编造。**政策依据（Policy Reference）严格仅限于检索到的政策文档原文。若结合国家政务常识或通用经验进行补充，必须明确区分为【国家/公开渠道参考指引】，严禁将外部常识冒充为公司政策条款。**
+2. **引用来源**：回答时标注政策依据（如"根据《员工年假管理办法》第X条"），政策中未记载的内容不可断言为政策条款。
 3. **确认操作**：涉及提交申请等写操作时，必须先展示摘要请用户确认
 4. **个性化**：结合当前员工的身份、部门、级别给出个性化建议
 5. **诚实边界**：不确定的内容明确告知，不猜测
@@ -224,13 +224,3 @@ def build_workforce_graph(config: LLMConfig, checkpointer=None):
 
     return workflow.compile(checkpointer=checkpointer)
 
-    """组合基础 System Prompt 与 RAG 检索知识"""
-    content = build_system_prompt()
-    if retrieved_docs:
-        content += "\n\n## 相关政策知识（检索结果）\n"
-        for i, doc in enumerate(retrieved_docs, 1):
-            title = doc.get("title", "")
-            doc_id = doc.get("doc_id", "")
-            doc_content = doc.get("content", "")
-            content += f"\n### [{i}] {title}（{doc_id}）\n{doc_content}\n"
-    return SystemMessage(content=content)

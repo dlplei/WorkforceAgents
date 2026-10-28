@@ -5,10 +5,22 @@ import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, AppConfig }
 interface Props {
   config: AppConfig;
   onOpenSettings: () => void;
+  messages: ChatMessage[];
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  initialPrompt?: string;
+  onClearInitialPrompt?: () => void;
+  onFirstMessageSent?: (content: string) => void;
 }
 
-export default function ChatInterface({ config, onOpenSettings }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export default function ChatInterface({
+  config,
+  onOpenSettings,
+  messages,
+  setMessages,
+  initialPrompt,
+  onClearInitialPrompt,
+  onFirstMessageSent,
+}: Props) {
   const [input, setInput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
@@ -21,6 +33,15 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
   const toolCallsRef = useRef<ToolCallInfo[]>([]);
   const toolResultsRef = useRef<ToolResultInfo[]>([]);
 
+  // 监听外部注入快捷提示
+  useEffect(() => {
+    if (initialPrompt) {
+      setInput(initialPrompt);
+      inputRef.current?.focus();
+      onClearInitialPrompt?.();
+    }
+  }, [initialPrompt, onClearInitialPrompt]);
+
   // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -30,6 +51,9 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
     if (!input.trim() || isRunning) return;
 
     const userMessage = input.trim();
+    if (messages.length === 0) {
+      onFirstMessageSent?.(userMessage);
+    }
     setInput('');
     setIsRunning(true);
     setStreamingContent('');
@@ -127,7 +151,7 @@ export default function ChatInterface({ config, onOpenSettings }: Props) {
       toolResultsRef.current = [];
       abortControllerRef.current = null;
     }
-  }, [input, isRunning, config, onOpenSettings]);
+  }, [input, isRunning, config, messages, setMessages, onFirstMessageSent]);
 
   const handleEvent = (event: AgentEvent) => {
     switch (event.type) {
@@ -398,15 +422,109 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-// Simple markdown-like formatting
+// Markdown-like formatting with proper container wrapping for ordered and unordered lists
 function formatMessage(content: string): string {
-  return content
-    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
-    .replace(/`(.*?)`/g, '<code class="bg-slate-700/50 px-1 py-0.5 rounded text-cyan-300 text-xs">$1</code>')
-    .replace(/^### (.*$)/gm, '<h3 class="text-base font-semibold text-white mt-2 mb-1">$1</h3>')
-    .replace(/^## (.*$)/gm, '<h2 class="text-lg font-semibold text-white mt-3 mb-1">$1</h2>')
-    .replace(/^- (.*$)/gm, '<li class="ml-4 list-disc">$1</li>')
-    .replace(/^(\d+)\. (.*$)/gm, '<li class="ml-4 list-decimal">$2</li>');
+  const formatInline = (text: string): string => {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+      .replace(/`([^`]+)`/g, '<code class="bg-slate-700/50 px-1 py-0.5 rounded text-cyan-300 text-xs">$1</code>');
+  };
+
+  // Normalise lines (handle cases where divider is glued with previous content)
+  const normalized = content.replace(/([^\n])\s*(---|---|\*\*\*)\s*$/gm, '$1\n$2');
+  const lines = normalized.split('\n');
+  const result: string[] = [];
+  let inOl = false;
+  let inUl = false;
+
+  const closeLists = () => {
+    if (inOl) {
+      result.push('</ol>');
+      inOl = false;
+    }
+    if (inUl) {
+      result.push('</ul>');
+      inUl = false;
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    // Check divider: --- or ***
+    if (/^(---|---|\*\*\*)$/.test(trimmed) || /^---+$/.test(trimmed)) {
+      closeLists();
+      result.push('<hr class="my-3 border-slate-700/60" />');
+      continue;
+    }
+
+    // Check headings
+    const h3Match = rawLine.match(/^###\s+(.*)$/);
+    if (h3Match) {
+      closeLists();
+      result.push(`<h3 class="text-base font-semibold text-white mt-3 mb-1.5">${formatInline(h3Match[1])}</h3>`);
+      continue;
+    }
+
+    const h2Match = rawLine.match(/^##\s+(.*)$/);
+    if (h2Match) {
+      closeLists();
+      result.push(`<h2 class="text-lg font-semibold text-white mt-4 mb-2">${formatInline(h2Match[1])}</h2>`);
+      continue;
+    }
+
+    const h1Match = rawLine.match(/^#\s+(.*)$/);
+    if (h1Match) {
+      closeLists();
+      result.push(`<h1 class="text-xl font-bold text-white mt-4 mb-2">${formatInline(h1Match[1])}</h1>`);
+      continue;
+    }
+
+    // Check ordered list: 1. xxx or 1) xxx
+    const olMatch = rawLine.match(/^\s*(\d+)[\.\)]\s+(.*)$/);
+    if (olMatch) {
+      if (inUl) {
+        result.push('</ul>');
+        inUl = false;
+      }
+      if (!inOl) {
+        result.push('<ol class="list-decimal ml-6 my-1.5 space-y-1">');
+        inOl = true;
+      }
+      result.push(`<li>${formatInline(olMatch[2])}</li>`);
+      continue;
+    }
+
+    // Check unordered list: - xxx or * xxx
+    const ulMatch = rawLine.match(/^\s*[-*]\s+(.*)$/);
+    if (ulMatch) {
+      if (inOl) {
+        result.push('</ol>');
+        inOl = false;
+      }
+      if (!inUl) {
+        result.push('<ul class="list-disc ml-6 my-1.5 space-y-1">');
+        inUl = true;
+      }
+      result.push(`<li>${formatInline(ulMatch[1])}</li>`);
+      continue;
+    }
+
+    // Empty line
+    if (!trimmed) {
+      closeLists();
+      result.push('<div class="h-2"></div>');
+      continue;
+    }
+
+    // Regular text line
+    closeLists();
+    result.push(`<div class="my-0.5">${formatInline(rawLine)}</div>`);
+  }
+
+  closeLists();
+  return result.join('\n');
 }
 
 function getNodeLabel(node: string): string {

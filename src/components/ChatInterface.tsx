@@ -422,6 +422,60 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+// Render markdown tables into responsive Tailwind styled HTML
+function renderMarkdownTable(
+  lines: string[],
+  startIndex: number,
+  formatInline: (t: string) => string
+): { html: string; endIndex: number } {
+  const getCells = (line: string): string[] =>
+    line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+
+  const headerCells = getCells(lines[startIndex]);
+  const dividerCells = getCells(lines[startIndex + 1]);
+
+  const alignments = dividerCells.map(c => {
+    const left = c.startsWith(':');
+    const right = c.endsWith(':');
+    if (left && right) return 'text-center';
+    if (right) return 'text-right';
+    return 'text-left';
+  });
+
+  let html = '<div class="overflow-x-auto my-3 rounded-lg border border-slate-700/60 shadow-sm">';
+  html += '<table class="min-w-full text-xs divide-y divide-slate-700/80 border-collapse">';
+  html += '<thead class="bg-slate-800/90 text-slate-200"><tr>';
+
+  headerCells.forEach((h, idx) => {
+    const align = alignments[idx] || 'text-left';
+    html += `<th class="px-3 py-2 font-semibold ${align}">${formatInline(h)}</th>`;
+  });
+  html += '</tr></thead>';
+
+  html += '<tbody class="divide-y divide-slate-800/60 bg-slate-900/40">';
+  let i = startIndex + 2;
+
+  while (i < lines.length && lines[i].trim().includes('|')) {
+    const trimmed = lines[i].trim();
+    const cells = trimmed.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+    if (cells.length > 0 && cells.every(c => /^:?-+:?$/.test(c))) {
+      break; // Stop if another divider row appears
+    }
+    const rowCells = getCells(lines[i]);
+    html += '<tr class="hover:bg-slate-800/30 transition-colors">';
+    rowCells.forEach((c, idx) => {
+      const align = alignments[idx] || 'text-left';
+      html += `<td class="px-3 py-2 text-slate-300 ${align}">${formatInline(c)}</td>`;
+    });
+    html += '</tr>';
+    i++;
+  }
+  html += '</tbody></table></div>';
+
+  return { html, endIndex: i - 1 };
+}
+
+
 // Markdown-like formatting with proper container wrapping for ordered and unordered lists
 function formatMessage(content: string): string {
   const formatInline = (text: string): string => {
@@ -436,21 +490,46 @@ function formatMessage(content: string): string {
   const result: string[] = [];
   let inOl = false;
   let inUl = false;
+  let inNestedUl = false;
+
+  const closeNestedUl = () => {
+    if (inNestedUl) {
+      result.push('</ul>');
+      inNestedUl = false;
+    }
+  };
+
+  const isTableDivider = (line: string): boolean => {
+    const trimmed = line.trim();
+    if (!trimmed.includes('|')) return false;
+    const cells = trimmed.replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+    return cells.length > 0 && cells.every(c => /^:?-+:?$/.test(c));
+  };
 
   const closeLists = () => {
-    if (inOl) {
-      result.push('</ol>');
-      inOl = false;
-    }
+    closeNestedUl();
     if (inUl) {
       result.push('</ul>');
       inUl = false;
+    }
+    if (inOl) {
+      result.push('</ol>');
+      inOl = false;
     }
   };
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const trimmed = rawLine.trim();
+
+    // Check table: current line has '|' and next line is table divider
+    if (trimmed.includes('|') && i + 1 < lines.length && isTableDivider(lines[i + 1])) {
+      closeLists();
+      const { html, endIndex } = renderMarkdownTable(lines, i, formatInline);
+      result.push(html);
+      i = endIndex;
+      continue;
+    }
 
     // Check divider: --- or ***
     if (/^(---|---|\*\*\*)$/.test(trimmed) || /^---+$/.test(trimmed)) {
@@ -484,6 +563,7 @@ function formatMessage(content: string): string {
     // Check ordered list: 1. xxx or 1) xxx
     const olMatch = rawLine.match(/^\s*(\d+)[\.\)]\s+(.*)$/);
     if (olMatch) {
+      closeNestedUl();
       if (inUl) {
         result.push('</ul>');
         inUl = false;
@@ -492,7 +572,7 @@ function formatMessage(content: string): string {
         result.push('<ol class="list-decimal ml-6 my-1.5 space-y-1">');
         inOl = true;
       }
-      result.push(`<li>${formatInline(olMatch[2])}</li>`);
+      result.push(`<li value="${olMatch[1]}">${formatInline(olMatch[2])}</li>`);
       continue;
     }
 
@@ -500,8 +580,12 @@ function formatMessage(content: string): string {
     const ulMatch = rawLine.match(/^\s*[-*]\s+(.*)$/);
     if (ulMatch) {
       if (inOl) {
-        result.push('</ol>');
-        inOl = false;
+        if (!inNestedUl) {
+          result.push('<ul class="list-disc ml-6 my-1 space-y-0.5 text-slate-300">');
+          inNestedUl = true;
+        }
+        result.push(`<li>${formatInline(ulMatch[1])}</li>`);
+        continue;
       }
       if (!inUl) {
         result.push('<ul class="list-disc ml-6 my-1.5 space-y-1">');
@@ -513,6 +597,20 @@ function formatMessage(content: string): string {
 
     // Empty line
     if (!trimmed) {
+      // Check if subsequent non-empty line continues list
+      let nextLineIsList = false;
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextTrimmed = lines[j].trim();
+        if (!nextTrimmed) continue;
+        if (/^\s*(\d+)[\.\)]\s+/.test(nextTrimmed) || /^\s*[-*]\s+/.test(nextTrimmed)) {
+          nextLineIsList = true;
+        }
+        break;
+      }
+      if (nextLineIsList) {
+        continue;
+      }
+
       closeLists();
       result.push('<div class="h-2"></div>');
       continue;

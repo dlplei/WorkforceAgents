@@ -12,6 +12,18 @@ export interface AppConfig {
 }
 
 // --- Chat Types ---
+export interface ExecutionStep {
+  id: string;
+  node: string;
+  timestamp: number;
+  duration?: number;
+  status: 'running' | 'completed' | 'failed';
+  summary?: string;
+  toolCall?: ToolCallInfo;
+  toolResult?: ToolResultInfo;
+  details?: Record<string, unknown>;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -19,6 +31,7 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCallInfo[];
   toolResults?: ToolResultInfo[];
+  executionTrace?: ExecutionStep[];
 }
 
 // --- Tool Types ---
@@ -33,6 +46,27 @@ export interface ToolCallInfo {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+}
+
+// --- Graph Topology Types ---
+export interface GraphNode {
+  id: string;
+  label: string;
+  description: string;
+  type: 'control' | 'task';
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  conditional?: boolean;
+}
+
+export interface GraphTopology {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  mermaid?: string;
+  state_schema?: Record<string, string>;
 }
 
 export interface ToolResultInfo {

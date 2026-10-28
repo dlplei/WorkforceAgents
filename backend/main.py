@@ -119,6 +119,87 @@ async def get_tickets(ticket_id: Optional[str] = None):
     return adapter.get_tickets(emp.id, ticket_id)
 
 
+@app.get("/api/graph")
+async def get_graph_topology():
+    """获取 LangGraph 状态图拓扑结构定义与 Mermaid 流程图"""
+    try:
+        from agent.graph import build_workforce_graph
+        from config import get_config
+        cfg = get_config()
+        graph = build_workforce_graph(cfg)
+        compiled_graph = graph.get_graph()
+
+        node_metadata = {
+            "__start__": {
+                "name": "START",
+                "label": "用户输入 / 起点",
+                "description": "接收用户提问与历史多轮对话，注入系统 Prompt 与员工身份上下文",
+                "type": "control"
+            },
+            "knowledge_retrieval": {
+                "name": "knowledge_retrieval",
+                "label": "知识检索 (RAG)",
+                "description": "调用向量数据库与本地政策库进行混合语义检索，切片注入 AgentState.retrieved_docs",
+                "type": "task"
+            },
+            "reasoning": {
+                "name": "reasoning",
+                "label": "决策推理 (LLM)",
+                "description": "基于上下文与检索切片进行思考，判断是直接生成答复还是调用工具",
+                "type": "task"
+            },
+            "tool_execution": {
+                "name": "tool_execution",
+                "label": "工具执行 (Tools)",
+                "description": "分发执行具体企业工具（假期、差旅预算、工单申请等），生成 ToolMessage 回传",
+                "type": "task"
+            },
+            "__end__": {
+                "name": "END",
+                "label": "回复完成 / 终点",
+                "description": "结束状态机流转，流式输出完成并归档到会话历史",
+                "type": "control"
+            }
+        }
+
+        nodes = []
+        for n in compiled_graph.nodes.values():
+            meta = node_metadata.get(n.id, {})
+            nodes.append({
+                "id": n.id,
+                "label": meta.get("label", n.id),
+                "description": meta.get("description", ""),
+                "type": meta.get("type", "task"),
+            })
+
+        edges = []
+        for e in compiled_graph.edges:
+            edges.append({
+                "source": e.source,
+                "target": e.target,
+                "conditional": getattr(e, "conditional", False)
+            })
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "mermaid": compiled_graph.draw_mermaid(),
+            "state_schema": {
+                "messages": "Annotated[Sequence[BaseMessage], add_messages]",
+                "retrieved_docs": "List[Dict[str, Any]]"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate graph topology: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "nodes": [],
+            "edges": [],
+            "mermaid": ""
+        }
+
+
+
 @app.post("/api/config")
 async def update_llm_config(req: ConfigUpdate):
     """更新 LLM 配置"""

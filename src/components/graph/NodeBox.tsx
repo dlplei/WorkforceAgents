@@ -69,7 +69,41 @@ export default function NodeBox({
       </text>
       {isVisited && (
         <g>
-          <circle cx={pos.x + pos.w - 12 * scale} cy={pos.y + 12 * scale} r={6 * scale} fill="#10b981" />
+          {/* 当节点被多次访问/循环迭代时，显示独立的频次角标 (如 ×2, ×3)，避免与步骤序号混淆 */}
+          {Boolean(count && count > 1) && (
+            <g>
+              <rect
+                x={pos.x + pos.w - 38 * scale}
+                y={pos.y + 5.5 * scale}
+                width={20 * scale}
+                height={13 * scale}
+                rx={4 * scale}
+                fill="#0f172a"
+                stroke={activeColor}
+                strokeWidth="1"
+                strokeOpacity="0.8"
+              />
+              <text
+                x={pos.x + pos.w - 28 * scale}
+                y={pos.y + 15 * scale}
+                textAnchor="middle"
+                fill={activeColor}
+                fontSize={8 * scale}
+                fontWeight="bold"
+                fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+              >
+                ×{count}
+              </text>
+            </g>
+          )}
+
+          {/* 统一的状态指示：已完成执行一律显示对勾 ✓ */}
+          <circle
+            cx={pos.x + pos.w - 12 * scale}
+            cy={pos.y + 12 * scale}
+            r={6 * scale}
+            fill="#10b981"
+          />
           <text
             x={pos.x + pos.w - 12 * scale}
             y={pos.y + 15 * scale}
@@ -78,7 +112,7 @@ export default function NodeBox({
             fontSize={8 * scale}
             fontWeight="bold"
           >
-            {count && count > 1 ? count : '✓'}
+            ✓
           </text>
         </g>
       )}

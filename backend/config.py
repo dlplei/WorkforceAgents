@@ -30,9 +30,19 @@ class LLMConfig(BaseModel):
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 
 
+class RedisConfig(BaseModel):
+    """Redis 缓存配置"""
+    enabled: bool = os.getenv("REDIS_CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
+    host: str = os.getenv("REDIS_HOST", "127.0.0.1")
+    port: int = int(os.getenv("REDIS_PORT", "6379"))
+    db: int = int(os.getenv("REDIS_DB", "1"))
+    password: Optional[str] = os.getenv("REDIS_PASSWORD", None) or None
+    ttl: int = int(os.getenv("REDIS_CACHE_TTL", "86400"))  # 默认 24 小时
+
 
 # 全局配置（运行时由前端传入）
 current_config = LLMConfig()
+redis_config = RedisConfig()
 
 # 启动时打印配置信息
 logger.info("=" * 60)
@@ -63,3 +73,9 @@ def update_config(config: LLMConfig):
 def get_config() -> LLMConfig:
     """获取当前配置"""
     return current_config
+
+
+def get_redis_config() -> RedisConfig:
+    """获取当前 Redis 配置"""
+    return redis_config
+

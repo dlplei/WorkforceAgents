@@ -32,6 +32,7 @@ export interface ChatMessage {
   toolCalls?: ToolCallInfo[];
   toolResults?: ToolResultInfo[];
   executionTrace?: ExecutionStep[];
+  cached?: boolean;
 }
 
 // --- Tool Types ---
@@ -82,7 +83,7 @@ export type AgentEvent =
   | { type: 'token'; content: string }
   | { type: 'tool_call'; data: ToolCallInfo }
   | { type: 'tool_result'; data: ToolResultInfo }
-  | { type: 'message_complete'; content: string }
+  | { type: 'message_complete'; content: string; cached?: boolean }
   | { type: 'error'; content: string }
   | { type: 'status'; content: string }
   | { type: 'node_enter'; content: string }

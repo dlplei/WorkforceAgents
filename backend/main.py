@@ -1,6 +1,7 @@
 """
 Workforce Operations Agent - FastAPI Backend
 """
+import asyncio
 import json
 import logging
 from typing import Optional, List, Dict, Any
@@ -15,6 +16,13 @@ from agent.engine import AgentEngine
 from agent.tools import registry
 from db.database import get_current_employee, init_db
 from services.hr_adapter import get_hr_adapter
+from services.cache_service import (
+    init_cache,
+    get_cached_response,
+    set_cached_response,
+    get_cache_stats,
+    clear_cache,
+)
 
 
 # 配置日志
@@ -37,6 +45,9 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Workforce Operations Agent 启动中...")
     pg_ok = init_db()
     logger.info(f"PostgreSQL connection status: {'SUCCESS' if pg_ok else 'FAILED'}")
+
+    redis_ok = init_cache()
+    logger.info(f"Redis Cache connection status: {'SUCCESS' if redis_ok else 'FAILED'}")
 
     logger.info("=" * 60)
     logger.info(f"📦 已注册工具数量: {len(registry.get_all())}")
@@ -221,6 +232,19 @@ async def get_llm_config():
     }
 
 
+@app.get("/api/cache/stats")
+async def get_cache_statistics():
+    """获取 Redis 缓存统计与状态"""
+    return get_cache_stats()
+
+
+@app.post("/api/cache/clear")
+async def clear_cache_endpoint():
+    """清空项目相关的 Redis 缓存"""
+    deleted = clear_cache()
+    return {"status": "ok", "deleted_keys": deleted}
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     """
@@ -252,6 +276,57 @@ async def chat(req: ChatRequest):
         logger.info(f"   - Max Tokens: {cfg.max_tokens}")
         logger.info(f"   - API Key: {'已配置' if cfg.api_key else '未配置'}")
 
+    cfg = get_config()
+    current_model = (req.config.model if req.config and req.config.model else None) or cfg.model
+    # 尝试命中 Redis 问答缓存（支持首轮与连续多轮提问秒回）
+    cached_item = get_cached_response(req.message, model=current_model)
+    if cached_item:
+        cached_text = cached_item.get("content", "")
+        cached_tools = cached_item.get("tool_calls", [])
+        cached_results = cached_item.get("tool_results", [])
+        logger.info(f"⚡ [Redis 秒回] 命中缓存: '{req.message[:50]}' (共 {len(cached_text)} 字)")
+
+        async def cached_event_stream():
+            # 状态流转符合前端 GraphInspector & ChatInterface 期望
+            yield f"data: {json.dumps({'type': 'status', 'content': 'thinking'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'node_enter', 'content': 'knowledge_retrieval'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'node_exit', 'content': 'knowledge_retrieval'}, ensure_ascii=False)}\n\n"
+
+            # 如果存在工具调用，触发工具调用与执行节点事件
+            if cached_tools:
+                yield f"data: {json.dumps({'type': 'status', 'content': 'tool_calling'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'node_enter', 'content': 'tool_execution'}, ensure_ascii=False)}\n\n"
+                for tc in cached_tools:
+                    yield f"data: {json.dumps({'type': 'tool_call', 'data': tc}, ensure_ascii=False)}\n\n"
+                for tr in cached_results:
+                    yield f"data: {json.dumps({'type': 'tool_result', 'data': tr}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'node_exit', 'content': 'tool_execution'}, ensure_ascii=False)}\n\n"
+
+            yield f"data: {json.dumps({'type': 'status', 'content': 'responding'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'node_enter', 'content': 'response_generation'}, ensure_ascii=False)}\n\n"
+
+            # 快速切片流式推送（每块15字，间隔10ms，兼顾打字动效与极速秒回）
+            chunk_size = 15
+            for i in range(0, len(cached_text), chunk_size):
+                chunk = cached_text[i:i + chunk_size]
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0.01)
+
+            yield f"data: {json.dumps({'type': 'node_exit', 'content': 'response_generation'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'message_complete', 'content': cached_text, 'cached': True}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'content': 'idle'}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            cached_event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-Cache": "HIT",
+            },
+        )
+
     # 创建 Agent 引擎
     engine = AgentEngine()
     if req.history:
@@ -263,10 +338,38 @@ async def chat(req: ChatRequest):
                 })
 
     async def event_stream():
+        full_content = ""
+        tools_called = []
+        captured_tool_calls = []
+        captured_tool_results = []
         try:
             async for event in engine.run(req.message):
+                ev_type = event.get("type")
+                if ev_type == "tool_call":
+                    tool_data = event.get("data", {})
+                    captured_tool_calls.append(tool_data)
+                    t_name = tool_data.get("name", "")
+                    if t_name:
+                        tools_called.append(t_name)
+                elif ev_type == "tool_result":
+                    tool_res_data = event.get("data", {})
+                    captured_tool_results.append(tool_res_data)
+                elif ev_type == "message_complete":
+                    full_content = event.get("content", "")
+
                 # 格式化为 SSE
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+            # 正常完成时，将结果缓存入 Redis
+            if full_content:
+                set_cached_response(
+                    question=req.message,
+                    content=full_content,
+                    model=current_model,
+                    tools_used=tools_called,
+                    tool_calls=captured_tool_calls,
+                    tool_results=captured_tool_results,
+                )
         except Exception as e:
             logger.error(f"💥 聊天处理错误: {type(e).__name__}: {e}")
             logger.exception("完整异常堆栈:")
@@ -279,7 +382,8 @@ async def chat(req: ChatRequest):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            "X-Accel-Buffering": "no",
+            "X-Cache": "MISS",
         },
     )
 

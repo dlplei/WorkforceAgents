@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow } from 'lucide-react';
+import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap } from 'lucide-react';
 import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig } from '../types';
 import GraphInspector from './GraphInspector';
 
@@ -266,6 +266,7 @@ export default function ChatInterface({
             role: 'assistant',
             content: event.content,
             timestamp: Date.now(),
+            cached: event.cached,
             toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
             toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
           },
@@ -506,6 +507,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           ? 'bg-blue-600/20 border border-blue-500/30 rounded-tr-none'
           : 'bg-slate-800/50 border border-slate-700/50 rounded-tl-none'
       }`}>
+        {!isUser && message.cached && (
+          <div className="mb-2">
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              <Zap className="w-3 h-3 mr-1 text-emerald-400" />
+              Redis 缓存秒回
+            </span>
+          </div>
+        )}
         {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
           <div className="mb-2 pb-2 border-b border-slate-700/50">
             <button

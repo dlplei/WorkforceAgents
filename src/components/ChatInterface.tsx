@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap } from 'lucide-react';
+import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap, RotateCcw, Database } from 'lucide-react';
 import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig } from '../types';
 import GraphInspector from './GraphInspector';
 
@@ -57,14 +57,28 @@ export default function ChatInterface({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!input.trim() || isRunning) return;
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isClearingCache, setIsClearingCache] = useState(false);
 
-    const userMessage = input.trim();
-    if (messages.length === 0) {
-      onFirstMessageSent?.(userMessage);
+  const handleSubmit = useCallback(async (forcedQuery?: string, forceRefresh: boolean = false) => {
+    const userMessage = (forcedQuery !== undefined ? forcedQuery : input).trim();
+    if (!userMessage || isRunning) return;
+
+    if (!forcedQuery) {
+      if (messages.length === 0) {
+        onFirstMessageSent?.(userMessage);
+      }
+      setInput('');
+      // Add user message
+      const userMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: userMessage,
+        timestamp: Date.now(),
+      };
+      setMessages(prev => [...prev, userMsg]);
     }
-    setInput('');
+
     setIsRunning(true);
     setStreamingContent('');
     toolCallsRef.current = [];
@@ -78,18 +92,9 @@ export default function ChatInterface({
         timestamp: Date.now(),
         duration: 12,
         status: 'completed',
-        summary: '接收用户提问并注入员工上下文 (张明 E10293)',
+        summary: `接收用户提问并注入员工上下文 (张明 E10293)${forceRefresh ? ' [强制刷新模式]' : ''}`,
       },
     ]);
-
-    // Add user message
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: userMessage,
-      timestamp: Date.now(),
-    };
-    setMessages(prev => [...prev, userMsg]);
 
     // Create abort controller
     abortControllerRef.current = new AbortController();
@@ -108,6 +113,7 @@ export default function ChatInterface({
           history: messages
             .filter(m => m.content && m.content.trim().length > 0)
             .map(m => ({ role: m.role, content: m.content })),
+          force_refresh: forceRefresh,
           config: {
             ...(config.apiKey ? { api_key: config.apiKey } : {}),
             model: config.model,
@@ -305,6 +311,50 @@ export default function ChatInterface({
       handleSubmit();
     }
   };
+  const handleRegenerate = useCallback(
+    async (assistantMessageId: string) => {
+      if (isRunning) return;
+      const targetIdx = messages.findIndex((m) => m.id === assistantMessageId);
+      if (targetIdx === -1) return;
+
+      let userQuery = '';
+      for (let i = targetIdx - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          userQuery = messages[i].content;
+          break;
+        }
+      }
+      if (!userQuery) return;
+
+      // 截断移除当前旧的 Assistant 回复
+      setMessages((prev) => prev.slice(0, targetIdx));
+      await handleSubmit(userQuery, true);
+    },
+    [messages, isRunning, handleSubmit]
+  );
+
+  const handleClearCache = async () => {
+    if (isClearingCache) return;
+    setIsClearingCache(true);
+    try {
+      const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
+      const response = await fetch(`${backendBase}/api/cache/clear`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setToastMessage(`已清空 ${data.deleted_keys ?? 0} 个 Redis 缓存条目`);
+      } else {
+        setToastMessage('清空缓存失败');
+      }
+    } catch {
+      setToastMessage('连接后端异常');
+    } finally {
+      setIsClearingCache(false);
+      setTimeout(() => setToastMessage(null), 2500);
+    }
+  };
+
 
   const handleClear = () => {
     setMessages([]);
@@ -360,11 +410,27 @@ export default function ChatInterface({
               <Workflow className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden sm:inline">状态图</span>
             </button>
+            <button
+              onClick={handleClearCache}
+              disabled={isClearingCache}
+              className="p-2 text-slate-400 hover:text-amber-300 hover:bg-slate-700 rounded-lg transition-colors"
+              title="清空 Redis 问答缓存（下次提问直连模型）"
+            >
+              <Database className={`w-4 h-4 ${isClearingCache ? 'animate-pulse text-amber-400' : ''}`} />
+            </button>
             <button onClick={handleClear} className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="清空对话">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
         </div>
+
+        {/* Floating Toast Notification */}
+        {toastMessage && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1.5 bg-slate-900/95 border border-cyan-500/50 text-cyan-300 text-xs rounded-full shadow-2xl backdrop-blur flex items-center space-x-2">
+            <Database className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{toastMessage}</span>
+          </div>
+        )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -392,7 +458,12 @@ export default function ChatInterface({
         )}
 
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            isRunning={isRunning}
+            onRegenerate={handleRegenerate}
+          />
         ))}
 
         {/* Tool calls in progress */}
@@ -486,7 +557,15 @@ export default function ChatInterface({
 }
 
 // --- Message Bubble ---
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  isRunning,
+  onRegenerate,
+}: {
+  message: ChatMessage;
+  isRunning?: boolean;
+  onRegenerate?: (id: string) => void;
+}) {
   const isUser = message.role === 'user';
   const formatted = isUser ? message.content : formatMessage(message.content);
   const [showTools, setShowTools] = useState(false);
@@ -545,6 +624,21 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <div className="text-sm text-slate-200 whitespace-pre-wrap">{message.content}</div>
         ) : (
           <div className="text-sm text-slate-200 leading-relaxed" dangerouslySetInnerHTML={{ __html: formatted }} />
+        )}
+        {!isUser && !isRunning && onRegenerate && (
+          <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center justify-between text-xs text-slate-400">
+            <span className="text-[10px] text-slate-500">
+              {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            <button
+              onClick={() => onRegenerate(message.id)}
+              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-700/60 transition-colors"
+              title="跳过 Redis 缓存，强制直连大模型重新计算并刷新缓存"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>重新生成</span>
+            </button>
+          </div>
         )}
       </div>
     </div>

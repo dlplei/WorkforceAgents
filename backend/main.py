@@ -22,6 +22,7 @@ from services.cache_service import (
     set_cached_response,
     get_cache_stats,
     clear_cache,
+    invalidate_cache_on_write,
 )
 
 
@@ -83,6 +84,7 @@ class ChatRequest(BaseModel):
     message: str
     history: Optional[List[Dict[str, Any]]] = None
     config: Optional[LLMConfig] = None
+    force_refresh: Optional[bool] = False  # 强制跳过缓存重新生成，并在完成时覆写缓存
 
 
 class ConfigUpdate(BaseModel):
@@ -278,8 +280,14 @@ async def chat(req: ChatRequest):
 
     cfg = get_config()
     current_model = (req.config.model if req.config and req.config.model else None) or cfg.model
-    # 尝试命中 Redis 问答缓存（支持首轮与连续多轮提问秒回）
-    cached_item = get_cached_response(req.message, model=current_model)
+
+    # 尝试命中 Redis 问答缓存（若启用 force_refresh 则直接绕过）
+    if req.force_refresh:
+        logger.info(f"🔄 [强刷模式 force_refresh] 跳过 Redis 缓存，强制直连大模型重新生成: '{req.message[:50]}'")
+        cached_item = None
+    else:
+        cached_item = get_cached_response(req.message, model=current_model)
+
     if cached_item:
         cached_text = cached_item.get("content", "")
         cached_tools = cached_item.get("tool_calls", [])
@@ -354,6 +362,12 @@ async def chat(req: ChatRequest):
                 elif ev_type == "tool_result":
                     tool_res_data = event.get("data", {})
                     captured_tool_results.append(tool_res_data)
+                    t_name = tool_res_data.get("tool_name", "")
+                    if t_name and tool_res_data.get("success", True):
+                        # Evict-on-Write: 业务写操作成功时主动淘汰相关关联动态缓存
+                        evicted = invalidate_cache_on_write(t_name)
+                        if evicted > 0:
+                            logger.info(f"🧹 [Evict-on-Write] 写操作 '{t_name}' 成功执行，已联动淘汰 {evicted} 条陈旧缓存")
                 elif ev_type == "message_complete":
                     full_content = event.get("content", "")
 

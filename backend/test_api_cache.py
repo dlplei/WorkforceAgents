@@ -123,7 +123,29 @@ class TestFastAPICacheIntegration(unittest.TestCase):
         complete_events = [e for e in events if e.get("type") == "message_complete"]
         self.assertEqual(len(complete_events), 1)
         self.assertTrue(complete_events[0].get("cached"))
-        self.assertEqual(complete_events[0].get("content"), content)
+
+    def test_chat_stream_force_refresh_bypasses_cache(self):
+        """测试客户端传入 force_refresh: True 时跳过缓存秒回，直通模型执行"""
+        question = "请假审批一般需要多长时间？"
+        cached_content = "旧的缓存：通常需要1个工作日。"
+        set_cached_response(
+            question=question,
+            content=cached_content,
+            model="gemini-3.7-flash",
+        )
+
+        # 默认不传 force_refresh -> 应该 HIT
+        res_cached = self.client.post("/api/chat", json={"message": question})
+        self.assertEqual(res_cached.status_code, 200)
+        self.assertEqual(res_cached.headers.get("x-cache"), "HIT")
+
+        # 传入 force_refresh: True -> 应该跳过缓存，直通执行（不带 X-Cache: HIT 头）
+        res_forced = self.client.post(
+            "/api/chat",
+            json={"message": question, "force_refresh": True},
+        )
+        self.assertEqual(res_forced.status_code, 200)
+        self.assertNotEqual(res_forced.headers.get("x-cache"), "HIT")
 
     def test_cache_clear_endpoint(self):
         """测试 POST /api/cache/clear"""

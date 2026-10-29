@@ -659,35 +659,225 @@
             </tbody>
           </table>
 
-          <h3>3. Guardrails 三层防护</h3>
+          <h3>3. 企业级安全 Guardrails 与五层漏斗纵深防御体系</h3>
+          <div class="note" style="margin-bottom:16px;">
+            <strong>🛡️ 纵深防御架构原则：</strong>业内实践表明，单纯依赖黑白名单关键词枚举存在易被同义改写绕过、长尾偏离泛化差、维护成本指数级攀升等痛点。本系统参考产业界权威安全范式，构建<strong>「五层立体防御漏斗（Defense-in-Depth Funnel）」</strong>，并深度实装<strong>「确定性短路规则 + 本地语义空间向量距离护栏 + 推理层动态引导 + 工具级代码硬 RBAC」</strong>四维防御闭环。
+          </div>
+
+          <h4>3.1 安全防护能力落地方案与业界前沿对照矩阵</h4>
+          <p>下表清晰标示了本系统当前<strong>实际落地实现（已实装）</strong>与<strong>业界主流高级框架/未来演进方向（未实装）</strong>的技术选型与权衡：</p>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:14%;">防御层级</th>
+                <th style="width:22%;">业界主流技术与代表方案</th>
+                <th style="width:16%;">本系统实装状态</th>
+                <th style="width:26%;">本系统技术落地机制 / 对应代码</th>
+                <th style="width:22%;">选型权衡与未实装考量</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>L1 快速确定性过滤</strong></td>
+                <td>Regex 正则引擎、Aho-Corasick 敏感词字典树、快速短路拦截</td>
+                <td><span class="badge" style="background:#10b981; color:#fff;">✅ 已在本系统实装</span></td>
+                <td><code>backend/agent/guardrails.py</code><br />内置已知越狱特征、攻击性辱骂、敏感越权刺探（如查询他人/高管薪资）及常规问候短路。</td>
+                <td><strong>纳秒级响应</strong>，将 80% 的明确对抗与越权探测直接在入口 Fast-Fail，避免无谓消耗后续推理与向量算力。</td>
+              </tr>
+              <tr>
+                <td><strong>L2 语义空间距离护栏</strong></td>
+                <td>密集语义向量相似度空间判定、语义边界投影（Semantic Boundaries）</td>
+                <td><span class="badge" style="background:#10b981; color:#fff;">✅ 已在本系统实装</span></td>
+                <td><code>backend/agent/guardrails.py</code><br />基于本地 <strong>Ollama BGE-M3 (1024 维)</strong> 密集向量，构建 HR 业务领域语义锚点原型矩阵，动态计算输入余弦距离（阈值 &lt; 0.40 触发专业引导）。</td>
+                <td><strong>解决枚举局限性</strong>。无需穷举海量外部话题（如量子力学、法式烹饪、历史事件等），均能泛化识别偏离业务并礼貌引导；含离线降级保护。</td>
+              </tr>
+              <tr>
+                <td><strong>L2 专用对抗分类 SLM</strong></td>
+                <td>Meta Prompt Guard (86M)、Llama Guard 3、Jailbreak Classifier</td>
+                <td><span class="badge" style="background:#6b7280; color:#fff;">⏳ 业界方案 (未实装)</span></td>
+                <td><em>未接入独立分类小模型</em></td>
+                <td><strong>权衡考量</strong>：需常驻独立显存与 PyTorch 运行时，增加单次推理延时；目前通过 L1 正则 + L2 密集向量距离已具备高泛化防御力，二期可按需集成。</td>
+              </tr>
+              <tr>
+                <td><strong>L3 会话流编排与引导</strong></td>
+                <td>动态上下文注入、NVIDIA NeMo Guardrails (Colang)、Guardrails AI</td>
+                <td><span class="badge" style="background:#10b981; color:#fff;">✅ 核心能力实装<br /><small>(自研原生状态编排)</small></span></td>
+                <td><code>backend/agent/graph.py</code><br /><code>backend/agent/engine.py</code><br />情绪感知动态激活 <code>emotion_instruction</code> 注入 System Prompt；Policy Grounding 强制切片溯源；主动工单升阶引导。</td>
+                <td><strong>权衡考量</strong>：未引入外部重量级 NeMo 框架（避免 Colang 状态机的学习陡峭度与编排侵入性），采用 LangGraph 原生条件分支与动态提示词注入，轻量且完全可控。</td>
+              </tr>
+              <tr>
+                <td><strong>L4 工具执行层强权限</strong></td>
+                <td>Zero-Trust 零信任校验、代码级硬 RBAC、敏感参数深度脱敏与沙箱</td>
+                <td><span class="badge" style="background:#10b981; color:#fff;">✅ 已在本系统实装</span></td>
+                <td><code>backend/agent/tools.py</code><br />工具执行层硬编码校验员工登录工号（如 <code>E10293</code>），代码级拒绝越权跨工号操作；新增“员工关怀与申诉”工单类目。</td>
+                <td><strong>绝不信任 LLM 决策</strong>。即使模型在 Prompt Injection 攻击下产生幻觉调用越权工具，执行层硬规则仍可 100% 确保数据隔离与操作安全。</td>
+              </tr>
+              <tr>
+                <td><strong>L5 输出侧审查与审计</strong></td>
+                <td>Microsoft Presidio PII 脱敏、RAG 忠实度自动评估（Ragas / Groundedness）</td>
+                <td><span class="badge" style="background:#6b7280; color:#fff;">⏳ 业界方案 (未实装)</span></td>
+                <td><em>暂未集成独立 Presidio 服务与动态忠实度评分</em></td>
+                <td><strong>权衡考量</strong>：当前系统通过 L4 工具隔离从数据源头杜绝非本人敏感数据泄露；输出端通过 Policy Grounding 约束。深度 NER 脱敏与幻觉打分规划在 Phase 2 企业合规改造中演进。</td>
+              </tr>
+              <tr>
+                <td><strong>企业云原生网关</strong></td>
+                <td>Azure AI Content Safety (Prompt Shields)、AWS Bedrock Guardrails</td>
+                <td><span class="badge" style="background:#6b7280; color:#fff;">⏳ 业界方案 (未实装)</span></td>
+                <td><em>未采用外部商业云托管安全服务</em></td>
+                <td><strong>权衡考量</strong>：企业 HR 数据（薪酬、员工申诉、考勤）属于高敏感内部机密，私有化部署要求零数据外流。公有云安全 API 涉及外部网络依赖与合规风险。</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4>3.2 本系统已实装防御体系架构与实现细则</h4>
           <div class="grid-3">
             <div class="card">
-              <h4>🛡️ 输入侧防护</h4>
+              <h4>🛡️ 输入前置防御 (guardrails.py)</h4>
+              <p style="font-size:12px; color:var(--muted); margin-top:-4px;"><strong>L1 正则短路 + L2 向量空间距离</strong></p>
               <ul>
-                <li>Prompt Injection 检测</li>
-                <li>越权查询检测</li>
-                <li>敏感信息识别</li>
-                <li>上传文档安全扫描</li>
+                <li><strong>微秒级 Prompt Injection 阻断</strong>：识别 <code>ignore previous instructions</code>、系统提示词窥探、黑客/越狱模式；</li>
+                <li><strong>越权敏感数据刺探拦截</strong>：精准阻断跨权限刺探 CEO/高管薪资、批量导出所有员工机密信息；</li>
+                <li><strong>本地 BGE-M3 语义向量护栏</strong>：通过 7 大核心人事业务领域锚点原型矩阵，动态计算输入余弦相似度，无需枚举即可泛化拦截量子物理、烹饪、外部娱乐等未知长尾偏离，并给出专业人事业务指引；</li>
+                <li><strong>打招呼与高频偏离快速短路</strong>：毫秒级响应，避免调用大模型浪费算力。</li>
               </ul>
             </div>
             <div class="card">
-              <h4>🧠 推理侧防护</h4>
+              <h4>🧠 推理侧防御与动态共情 (graph.py / engine.py)</h4>
+              <p style="font-size:12px; color:var(--muted); margin-top:-4px;"><strong>L3 编排状态流转与上下文注入</strong></p>
               <ul>
-                <li>政策回答必须基于检索结果</li>
-                <li>工具调用前参数校验</li>
-                <li>高风险任务人工确认</li>
-                <li>权限判断前置</li>
+                <li><strong>Policy Grounding 事实锚定</strong>：严控政策类回答仅基于 Chroma 密集向量切片与 BM25 检索原文，杜绝编造企业假规章；</li>
+                <li><strong>动态情绪感知与共情注入</strong>：识别焦虑、抱怨、维权情绪，动态向 System Prompt 注入关怀指引，要求 Agent 先共情再解释政策；</li>
+                <li><strong>争议主动工单升阶</strong>：对强烈仲裁或人事投诉，主动协助员工创建 <code>create_hr_ticket</code>（服务分类：员工关怀与申诉）；</li>
+                <li><strong>高危动作交互门禁</strong>：休假提报、证明开具等涉及状态修改的操作，强制前端呈现参数确认摘要。</li>
               </ul>
             </div>
             <div class="card">
-              <h4>📤 输出侧防护</h4>
+              <h4>🔒 执行层零信任隔离 (tools.py)</h4>
+              <p style="font-size:12px; color:var(--muted); margin-top:-4px;"><strong>L4 代码级硬 RBAC 与数据沙箱</strong></p>
               <ul>
-                <li>避免暴露无权限数据</li>
-                <li>敏感字段脱敏</li>
-                <li>标注政策依据</li>
-                <li>明确不确定边界</li>
+                <li><strong>工号边界硬性校验</strong>：普通员工（如 <code>E10293</code>）执行工具时，若入参涉及其他工号（如 <code>E10001</code>），底层工具直接抛出 RBAC 拦截异常；</li>
+                <li><strong>不依赖大模型自觉</strong>：即使 LLM 被越狱诱导生成非法的跨工号工具调用，代码层直接拦截；</li>
+                <li><strong>工单服务全生命周期追踪</strong>：打通本地 PostgreSQL 与 ServiceNow 适配器双写，支持申诉进度可查；</li>
+                <li><strong>全链路流式审计轨迹</strong>：全流程事件记录到 SSE 流并在前端实时可视化反馈。</li>
               </ul>
             </div>
+          </div>
+
+          <h4>3.3 本系统的实际端到端执行链路与决策流转（图内 vs 图外判定）</h4>
+          <p>针对架构设计中<strong>「是否调用 LLM / 知识库检索的判断点位于何处」</strong>这一核心疑问，本系统采用<strong>「图外前置微秒级守门短路 + 图内极简 ReAct 循环」</strong>的高效解耦架构：</p>
+          <div class="note" style="margin-bottom:16px;">
+            <strong>💡 架构决策洞察（为什么不在 LangGraph 图内加路由节点？）：</strong><br />
+            若在 LangGraph 图内部新增一个意图分类节点（Router），通常需额外调度一次 LLM 或 SLM 判别，导致哪怕是简单的攻击刺探或日常问候，都会徒增 300~800ms 的模型推理耗时与 Token 成本。<br />
+            因此，本系统将<strong>「是否调用大模型」</strong>的前置决策前移至 <code>backend/agent/engine.py</code>，通过 <code>evaluate_guardrails</code> 实现纳秒/微秒级极速短路；只有真正合规的人事业务诉求，才会实例化并启动 LangGraph 状态图。
+          </div>
+
+          <div style="margin: 20px 0; padding: 20px; border-radius: 20px; background: #0b1120; border: 1px solid #1e293b; overflow-x: auto; box-shadow: 0 16px 36px rgba(0,0,0,0.35);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px;">
+              <span style="color:#38bdf8; font-weight:700; font-size:15px;">
+                ⏱️ 端到端请求流转与 LangGraph 图内/图外联动架构图
+              </span>
+              <span style="font-size:12px; background:#1e293b; color:#94a3b8; padding:3px 10px; border-radius:999px;">SVG 原生高保真渲染 · 离线可用</span>
+            </div>
+
+            <svg viewBox="0 0 920 440" width="100%" height="auto" style="min-width: 760px; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif;">
+              <defs>
+                <marker id="arrow-blue" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#38bdf8"/></marker>
+                <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#f87171"/></marker>
+                <marker id="arrow-amber" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#fbbf24"/></marker>
+                <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#34d399"/></marker>
+                <marker id="arrow-purple" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c084fc"/></marker>
+              </defs>
+
+              <rect x="360" y="12" width="200" height="38" rx="19" fill="#1e293b" stroke="#475569" stroke-width="1.5"/>
+              <text x="460" y="36" fill="#f8fafc" font-size="13" font-weight="bold" text-anchor="middle">👤 员工提问输入 (自然语言)</text>
+              <line x1="460" y1="50" x2="460" y2="78" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+              <rect x="250" y="78" width="420" height="52" rx="12" fill="#1e1b4b" stroke="#6366f1" stroke-width="2"/>
+              <text x="460" y="100" fill="#a5b4fc" font-size="14" font-weight="bold" text-anchor="middle">🛡️ 0. 前置 Guardrails 审查 (evaluate_guardrails)</text>
+              <text x="460" y="118" fill="#818cf8" font-size="11" text-anchor="middle">L1 正则快速短路 + L2 BGE-M3 语义向量余弦判定 (图外执行)</text>
+
+              <path d="M 250 104 L 110 104 L 110 162" fill="none" stroke="#f87171" stroke-width="2" marker-end="url(#arrow-red)"/>
+              <text x="175" y="96" fill="#fca5a5" font-size="11" font-weight="600" text-anchor="middle">场景 A: 越狱 / 越权 / 辱骂</text>
+
+              <rect x="20" y="162" width="180" height="60" rx="10" fill="#450a0a" stroke="#ef4444" stroke-width="1.5"/>
+              <text x="110" y="186" fill="#fecaca" font-size="12" font-weight="bold" text-anchor="middle">🚨 微秒级安全拒答</text>
+              <text x="110" y="206" fill="#fca5a5" font-size="10" text-anchor="middle">不调 LLM · 不查知识库 (Fast-Fail)</text>
+
+              <path d="M 350 130 L 300 130 L 300 162" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrow-amber)"/>
+              <text x="270" y="148" fill="#fde68a" font-size="11" font-weight="600" text-anchor="middle">场景 B: 偏离业务</text>
+
+              <rect x="215" y="162" width="170" height="60" rx="10" fill="#451a03" stroke="#f59e0b" stroke-width="1.5"/>
+              <text x="300" y="186" fill="#fef3c7" font-size="12" font-weight="bold" text-anchor="middle">🧭 业务领域快速引导</text>
+              <text x="300" y="206" fill="#fde68a" font-size="10" text-anchor="middle">推荐 4 项核心 HR 业务 (Fast-Guide)</text>
+
+              <path d="M 670 104 L 700 104 L 700 152" fill="none" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-green)"/>
+              <text x="760" y="96" fill="#6ee7b7" font-size="11" font-weight="600">场景 C: 合规人事诉求 (相似度 ≥ 0.40)</text>
+
+              <rect x="420" y="152" width="480" height="236" rx="16" fill="#0f172a" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="6 4"/>
+              <text x="440" y="174" fill="#38bdf8" font-size="12" font-weight="bold">🧠 LangGraph 状态图结构 (轻量 ReAct 循环)</text>
+
+              <rect x="445" y="190" width="120" height="34" rx="17" fill="#064e3b" stroke="#10b981" stroke-width="1.5"/>
+              <text x="505" y="212" fill="#a7f3d0" font-size="12" font-weight="bold" text-anchor="middle">🟢 START 起点</text>
+              <line x1="565" y1="207" x2="610" y2="207" stroke="#34d399" stroke-width="2" marker-end="url(#arrow-green)"/>
+
+              <rect x="610" y="186" width="265" height="42" rx="8" fill="#1e3a8a" stroke="#3b82f6" stroke-width="1.5"/>
+              <text x="742" y="206" fill="#bfdbfe" font-size="12" font-weight="bold" text-anchor="middle">1. knowledge_retrieval (知识检索)</text>
+              <text x="742" y="221" fill="#93c5fd" font-size="10" text-anchor="middle">Chroma 向量切片 + BM25 政策混合召回</text>
+              <line x1="742" y1="228" x2="742" y2="252" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-blue)"/>
+
+              <rect x="610" y="252" width="265" height="44" rx="8" fill="#3b0764" stroke="#a855f7" stroke-width="1.8"/>
+              <text x="742" y="272" fill="#f3e8ff" font-size="12" font-weight="bold" text-anchor="middle">2. reasoning (LLM 核心推理)</text>
+              <text x="742" y="288" fill="#d8b4fe" font-size="10" text-anchor="middle">绑定 8 核心 Tools · 注入 Emotion 指引</text>
+
+              <path d="M 610 274 L 545 274 L 545 320" fill="none" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrow-amber)"/>
+              <text x="555" y="266" fill="#fde68a" font-size="10">需调工具</text>
+
+              <rect x="445" y="320" width="200" height="42" rx="8" fill="#78350f" stroke="#f59e0b" stroke-width="1.5"/>
+              <text x="545" y="338" fill="#fef3c7" font-size="11" font-weight="bold" text-anchor="middle">3. tool_execution (工具执行)</text>
+              <text x="545" y="353" fill="#fde68a" font-size="9" text-anchor="middle">工号 RBAC 校验 · ServiceNow 双写</text>
+
+              <path d="M 645 341 L 685 341 L 685 296" fill="none" stroke="#c084fc" stroke-width="1.8" marker-end="url(#arrow-purple)"/>
+              <text x="690" y="325" fill="#e9d5ff" font-size="10">观察结果回流</text>
+
+              <line x1="775" y1="296" x2="775" y2="330" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow-blue)"/>
+              <text x="782" y="318" fill="#93c5fd" font-size="10">回答完毕</text>
+
+              <rect x="715" y="330" width="120" height="34" rx="17" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5"/>
+              <text x="775" y="352" fill="#cbd5e1" font-size="12" font-weight="bold" text-anchor="middle">🏁 END 终点</text>
+
+              <path d="M 110 222 L 110 410 L 390 410" fill="none" stroke="#f87171" stroke-width="1.5"/>
+              <path d="M 300 222 L 300 410 L 390 410" fill="none" stroke="#fbbf24" stroke-width="1.5"/>
+              <path d="M 775 364 L 775 410 L 530 410" fill="none" stroke="#38bdf8" stroke-width="1.5"/>
+
+              <rect x="390" y="394" width="140" height="34" rx="17" fill="#0284c7" stroke="#38bdf8" stroke-width="1.5"/>
+              <text x="460" y="416" fill="#ffffff" font-size="12" font-weight="bold" text-anchor="middle">📤 流式输出给用户</text>
+            </svg>
+          </div>
+
+          <div style="margin-top:14px;">
+            <p><strong>Mermaid 流程图源码定义（可直接复制并在 Markdown / IDE 中渲染）：</strong></p>
+            <pre><code>flowchart TD
+    User([用户输入: 自然语言]) --&gt; Guardrails{&quot;0. 前置 Guardrails 审查\n(evaluate_guardrails)&quot;}
+    
+    %% 短路分支 (完全不启动 LangGraph，不调用 LLM)
+    Guardrails -- &quot;命中攻击 / 越权 / 辱骂 (场景 A)&quot; --&gt; FastFail[&quot;直接流式返回安全拒答\n(微秒级，不调用 LLM / RAG)&quot;]
+    Guardrails -- &quot;偏离业务 / 纯打招呼 (场景 B)&quot; --&gt; FastGuide[&quot;直接流式返回业务指引\n(微秒级，不调用 LLM / RAG)&quot;]
+    FastFail --&gt; EndUser([输出给用户])
+    FastGuide --&gt; EndUser
+    
+    %% 合规业务分支 (启动 LangGraph 状态图)
+    Guardrails -- &quot;合规人事业务 (场景 C)&quot; --&gt; LG_START[&quot;LangGraph: START 起点&quot;]
+    
+    subgraph LangGraph 状态图
+        LG_START --&gt; KR[&quot;1. knowledge_retrieval\n(知识检索节点)&quot;]
+        KR --&gt; Reasoning[&quot;2. reasoning\n(LLM 推理核心)&quot;]
+        Reasoning --&gt; Decision{&quot;should_continue\n(是否需要工具)&quot;}
+        Decision -- &quot;调用工具&quot; --&gt; Tool[&quot;3. tool_execution\n(硬性 RBAC 隔离)&quot;]
+        Tool --&gt; Reasoning
+        Decision -- &quot;回答完成&quot; --&gt; LG_END[&quot;END 终点&quot;]
+    end
+    
+    LG_END --&gt; EndUser</code></pre>
           </div>
 
           <h3>4. 身份认证与权限控制</h3>

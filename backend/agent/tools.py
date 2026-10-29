@@ -5,11 +5,14 @@ Tool Calling 框架 - 可插拔工具注册与执行
 import time
 import json
 import os
+import logging
 from typing import Dict, Callable, Any, Optional, List
 from models import ToolResult
 from services.hr_adapter import get_hr_adapter
 from db.database import get_current_employee
 from agent.knowledge import retrieve_knowledge
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -63,13 +66,27 @@ class ToolRegistry:
         ]
 
     async def execute(self, name: str, arguments: dict) -> ToolResult:
-        """执行工具"""
+        """执行工具（具备 RBAC 权限与越权操作硬性校验）"""
         tool = self.get(name)
         if not tool:
             return ToolResult(
                 tool_name=name,
                 success=False,
                 error=f"Tool '{name}' not found",
+                execution_time=0.0,
+            )
+
+        # RBAC 权限硬性校验：普通员工仅能操作或查询本人数据，严禁跨工号越权访问
+        current_emp = get_current_employee()
+        current_emp_id = current_emp["id"] if isinstance(current_emp, dict) else getattr(current_emp, "id", "E10293")
+        current_emp_name = current_emp["name"] if isinstance(current_emp, dict) else getattr(current_emp, "name", "张明")
+        target_emp_id = arguments.get("employee_id")
+        if target_emp_id and str(target_emp_id).strip() != current_emp_id:
+            logger.warning(f"🔒 [RBAC 越权拦截] 员工 {current_emp_id} 试图访问他人工号: {target_emp_id} 的工具 {name}")
+            return ToolResult(
+                tool_name=name,
+                success=False,
+                error=f"【权限拦截 (RBAC)】当前登录员工【{current_emp_name} ({current_emp_id})】无权访问或操作其他员工（工号: {target_emp_id}）的数据。根据企业数据安全与保密管理办法，普通员工仅限办理与查看本人名下事务。",
                 execution_time=0.0,
             )
 
@@ -453,14 +470,14 @@ async def handle_create_hr_ticket(params: dict) -> dict:
 
 registry.register(
     name="create_hr_ticket",
-    description="创建 HR 服务工单（如社保公积金跨城转移、薪酬福利核算复议、工卡门禁补办、IT/行政支持诉求等），支持持久化及同步至 ServiceNow。",
+    description="创建 HR 服务工单（如社保公积金跨城转移、薪酬福利核算复议、考勤打卡申诉、员工关怀与维权、工卡门禁补办等），支持持久化及同步至 ServiceNow。",
     parameters={
         "type": "object",
         "properties": {
             "category": {
                 "type": "string",
                 "description": "工单分类",
-                "enum": ["社保公积金", "薪酬福利", "证明开具", "行政工卡", "综合咨询"]
+                "enum": ["社保公积金", "薪酬福利", "证明开具", "行政工卡", "综合咨询", "员工关怀与申诉"]
             },
             "title": {"type": "string", "description": "工单简短标题"},
             "description": {"type": "string", "description": "工单详细诉求与说明"},

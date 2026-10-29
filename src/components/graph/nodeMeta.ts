@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, BookOpen, Brain, Wrench, CheckCircle2 } from 'lucide-react';
+import { Play, BookOpen, Brain, Wrench, CheckCircle2, ShieldCheck } from 'lucide-react';
 
 export interface NodeMeta {
   name: string;
@@ -25,6 +25,18 @@ export const NODE_DEFINITIONS: Record<string, NodeMeta> = {
     glowColor: 'shadow-emerald-500/20',
     description: '接收用户提问与历史多轮对话，注入系统 Prompt 与员工身份上下文 (张明 E10293)。',
     handler: 'LangGraph START Node',
+    category: 'control',
+  },
+  guardrail_check: {
+    name: 'guardrail_check',
+    label: '安全护栏 (Guardrails)',
+    subLabel: '安全审查与情绪意图分析',
+    icon: ShieldCheck,
+    color: 'text-rose-400',
+    borderColor: 'border-rose-500/50',
+    glowColor: 'shadow-rose-500/30',
+    description: '前置安全与意图审查：拦截 Prompt Injection 越狱攻击与越权数据刺探，识别负面情绪并激活共情指引，过滤偏离业务话题。',
+    handler: 'evaluate_guardrails(user_message, history)',
     category: 'control',
   },
   knowledge_retrieval: {

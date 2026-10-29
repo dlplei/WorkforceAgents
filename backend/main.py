@@ -199,7 +199,8 @@ async def get_graph_topology():
             "mermaid": compiled_graph.draw_mermaid(),
             "state_schema": {
                 "messages": "Annotated[Sequence[BaseMessage], add_messages]",
-                "retrieved_docs": "List[Dict[str, Any]]"
+                "retrieved_docs": "List[Dict[str, Any]]",
+                "emotion_instruction": "Optional[str]"
             }
         }
     except Exception as e:

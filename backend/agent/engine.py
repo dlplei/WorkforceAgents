@@ -11,6 +11,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 from config import LLMConfig, get_config
 from agent.graph import build_workforce_graph, build_system_prompt
+from agent.guardrails import evaluate_guardrails
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -44,6 +45,46 @@ class AgentEngine:
         # 初始思考状态
         yield {"type": "status", "content": "thinking"}
 
+        # 0. 前置输入安全、越权探针、偏离业务与情绪护栏审查 (Guardrails Fast-Fail & Moderation)
+        guardrail_res = evaluate_guardrails(user_message, self.conversation_history)
+
+        # 场景 A: 拦截恶意提示词注入/越狱、数据越权刺探、或无业务意图的辱骂挑衅
+        if guardrail_res.is_blocked:
+            logger.warning(f"🚨 [Guardrails 拦截] 类别: {guardrail_res.category} | 原因: {guardrail_res.reason}")
+            reply = guardrail_res.refusal_message
+            yield {"type": "status", "content": "responding"}
+            yield {"type": "node_enter", "content": "reasoning"}
+            yield {"type": "node_enter", "content": "response_generation"}
+            for i in range(0, len(reply), 6):
+                yield {"type": "token", "content": reply[i:i+6]}
+                await asyncio.sleep(0.015)
+            yield {"type": "node_exit", "content": "response_generation"}
+            yield {"type": "node_exit", "content": "reasoning"}
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": reply})
+            yield {"type": "message_complete", "content": reply}
+            yield {"type": "status", "content": "idle"}
+            return
+
+        # 场景 B: 偏离业务话题（如代码编写、写诗、解题、外部闲聊）或纯问候快速引导
+        if guardrail_res.is_off_topic:
+            logger.info(f"🧭 [Guardrails 引导] 类别: {guardrail_res.category} | 原因: {guardrail_res.reason}")
+            reply = guardrail_res.refusal_message
+            yield {"type": "status", "content": "responding"}
+            yield {"type": "node_enter", "content": "reasoning"}
+            yield {"type": "node_enter", "content": "response_generation"}
+            for i in range(0, len(reply), 6):
+                yield {"type": "token", "content": reply[i:i+6]}
+                await asyncio.sleep(0.015)
+            yield {"type": "node_exit", "content": "response_generation"}
+            yield {"type": "node_exit", "content": "reasoning"}
+            self.conversation_history.append({"role": "user", "content": user_message})
+            self.conversation_history.append({"role": "assistant", "content": reply})
+            yield {"type": "message_complete", "content": reply}
+            yield {"type": "status", "content": "idle"}
+            return
+
+        # 场景 C: 合规业务请求（如伴随负面情绪，将情绪安抚与工单升级指引注入状态机）
         # 构建历史消息列表
         messages: List[BaseMessage] = []
         for msg in self.conversation_history:
@@ -64,9 +105,14 @@ class AgentEngine:
         in_response_generation = False
         current_has_tool_call = False
 
+        initial_state = {
+            "messages": messages,
+            "emotion_instruction": guardrail_res.emotion_instruction if guardrail_res.has_negative_emotion else None
+        }
+
         try:
             async for ev in graph.astream_events(
-                {"messages": messages},
+                initial_state,
                 version="v2",
                 config={"recursion_limit": self.max_iterations * 2}
             ):

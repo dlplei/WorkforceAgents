@@ -140,7 +140,7 @@
           <li><a href="#tools">工具调用清单</a></li>
           <li><a href="#workflow">Agent 工作流</a></li>
           <li><a href="#context">数据流与上下文融合</a></li>
-          <li><a href="#memory">Memory 系统设计</a></li>
+          <li><a href="#memory">Memory 系统与 Redis 缓存治理</a></li>
           <li><a href="#techstack">技术栈选型</a></li>
           <li><a href="#security">安全与权限</a></li>
           <li><a href="#roadmap">实施路线图</a></li>
@@ -486,27 +486,31 @@
             </div>
           </div>
 
-          <h3>请求处理时序</h3>
-          <pre><code>用户 → Agent Core → Memory → Knowledge → Tools
+          <h3>请求处理时序 (含 Redis 缓存短路与写时淘汰)</h3>
+          <pre><code>用户 → Agent Core → Redis DB 1 → Memory → Knowledge → Tools
   1. 自然语言输入 ──────────────────────────→
-  2. ────────→ 加载用户上下文 ──→
-  3. ────────→ RAG 检索相关政策 ──────→
-  4. ────────→ 推理 & 规划 ──→
-  5. ────────→ 调用业务工具 ──────────────→
-  6. ←──────── 返回工具结果 ←──────────────
-  7. ────────→ 更新 Memory ──→
-  8. ←──────── 返回结构化回答 ──→</code></pre>
+  2. ────────→ [检查 Redis DB 1 缓存] ──→
+     ├─ [缓存命中 且 未指定强刷] ────────────→ ⚡ 毫秒级流式返回缓存回答 (短路结束)
+     └─ [未命中 或 客户端强刷 (force_refresh)]
+  3. ────────→ 加载用户上下文 ──→
+  4. ────────→ RAG 检索相关政策 ──────→
+  5. ────────→ 推理 & 规划 (LangGraph 状态机) ──→
+  6. ────────→ 调用业务工具 ──────────────→
+  7. ←──────── 返回工具结果 ←──────────────
+  8. ────────→ 若执行写操作工具 ──→ [Evict-on-Write 联动淘汰关联旧缓存] ──→
+  9. ────────→ 按动态分级 TTL 写入 Redis (10m / 1h / 24h) ──→
+ 10. ←──────── 返回流式结构化回答 ──→</code></pre>
         </section>
 
-        <!-- 九、Memory 系统设计 -->
+        <!-- 九、Memory 系统设计与 Redis 缓存治理 -->
         <section id="memory">
-          <h2>九、Memory 系统设计</h2>
+          <h2>九、Memory 系统设计与 Redis 缓存治理</h2>
           <div class="grid">
             <div class="card">
-              <h4>🔵 工作记忆 (Working Memory)</h4>
-              <p>当前会话上下文，短期保持。</p>
-              <p><strong>技术：</strong>Redis + In-Context Window</p>
-              <p><strong>生命周期：</strong>会话期间</p>
+              <h4>🔵 工作记忆与问答缓存 (Working Memory & Cache)</h4>
+              <p>当前会话上下文短期保持，以及高频问答毫秒级秒回与流式回放。</p>
+              <p><strong>技术：</strong>Redis (DB 1) + In-Context Window + 分级 TTL</p>
+              <p><strong>生命周期：</strong>动态分级 (10m / 1h / 24h) / 会话期间 / 写时主动淘汰</p>
             </div>
             <div class="card">
               <h4>🟣 情景记忆 (Episodic Memory)</h4>
@@ -540,6 +544,92 @@
               <li>银行卡号等金融信息</li>
             </ul>
           </div>
+
+          <h3>生产级 Redis 问答缓存与生命周期管理架构 (实装落地)</h3>
+          <p class="lead">为了在高并发与重复提问场景下降低 LLM 算力消耗与响应延迟，系统在后端构建了基于 Redis DB 1 的生产级问答缓存与全生命周期治理闭环，提供毫秒级秒回、动态分级 TTL、写操作主动失效及人机协同强刷能力。</p>
+
+          <pre><code>                     ┌──────────────────────────────────────────────┐
+                     │               用户提问 / 业务交互             │
+                     └──────────────────────┬───────────────────────┘
+                                            │
+                        ┌───────────────────┴───────────────────┐
+                   force_refresh=True ?                    普通查询
+                        │                                       │
+                        ▼                                       ▼
+              [跳过缓存直通模型]                       [查询 Redis DB 1 缓存]
+                        │                                       │
+                        │                             ┌─────────┴─────────┐
+                        │                            命中               未命中
+                        │                             │                   │
+                        │                             ▼                   ▼
+                        │                      [毫秒级秒回流式推送]      [LangGraph 状态机编排]
+                        │                                                 │
+                        │                                       ┌─────────┴─────────┐
+                        │                                   触发写操作 ?          纯只读查询
+                        │                                       │                   │
+                        │                                       ▼                   │
+                        │                          [Evict-on-Write 主动淘汰]        │
+                        │                          (联动清除关联动态个人数据缓存)     │
+                        │                                       │                   │
+                        └───────────────────┬───────────────────┴───────────────────┘
+                                            │
+                                            ▼
+                                 [写入 Redis 动态分级缓存]
+                    ┌───────────────────────┼───────────────────────┐
+                    ▼                       ▼                       ▼
+            静态政策规章 (24h)        电子证明开具 (1h)       动态个人业务数据 (10min)</code></pre>
+
+          <div class="grid-3" style="margin-top:16px;">
+            <div class="card">
+              <h4>⏱️ 1. 动态分级 TTL 策略 (Tiered TTL)</h4>
+              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>按数据实效性智能评级</strong></p>
+              <ul>
+                <li><strong>静态企业政策（24h / 86400s）</strong>：休假制度、差旅差标、通用合规手册，政策变动频率低，长周期安全缓存；</li>
+                <li><strong>电子证明开具（1h / 3600s）</strong>：在职证明、收入证明等生成型文档，兼顾短时重复下载与员工最新就职信息时效；</li>
+                <li><strong>个人动态业务数据（10min / 600s）</strong>：年假余额查询、审批流进度、工单状态等强实时数据，采用短 TTL 兜底。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>🧹 2. 写操作主动失效联动 (Evict-on-Write)</h4>
+              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>业务动作驱动精准淘汰</strong></p>
+              <ul>
+                <li><strong>写操作识别</strong>：当 Agent 成功调用写工具（如 <code>submit_leave_request</code>、<code>create_service_ticket</code>、<code>cancel_service_ticket</code>）时自动触发；</li>
+                <li><strong>联动清除策略</strong>：精准清除受影响维度的缓存（如提交请假后，自动淘汰个人年假余额及“年假/请假/假期/余额”提问缓存），彻底杜绝数据更新后读取旧缓存；</li>
+                <li><strong>只读缓存安全保留</strong>：通用规章等静态政策缓存不受波及。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>🛡️ 3. 隔离与防 OOM 物理兜底 (LRU Eviction)</h4>
+              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>容器资源多租户安全</strong></p>
+              <ul>
+                <li><strong>独立 DB 隔离</strong>：接入宿主 Redis 容器但严格配置独立 <code>DB 1</code> 与 <code>workforce:cache:*</code> 键前缀，完全杜绝与宿主其他微服务键冲突；</li>
+                <li><strong>规范化模糊命中</strong>：自动对提问做去标点与空格清洗，支持中英文全半角标点模糊匹配；</li>
+                <li><strong>LRU 内存兜底</strong>：配合 <code>maxmemory-policy: volatile-lru</code>，优先淘汰最近最少使用的带过期时间缓存，彻底避免生产 OOM。</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="grid" style="margin-top:16px;">
+            <div class="card">
+              <h4>🔄 4. 客户端主动控制与人机协同闭环</h4>
+              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>用户体验与强制重算</strong></p>
+              <ul>
+                <li><strong>单条消息「重新生成」</strong>：在 Assistant 回复气泡右下角增加重新生成按钮，携带 <code>force_refresh: true</code> 直通大模型重新推理并覆写缓存，解决用户需要最新生成答案的需求；</li>
+                <li><strong>全局「清空 Redis 缓存」</strong>：在界面顶部工具栏新增清空缓存按钮，调用 <code>POST /api/cache/clear</code>，并弹出轻量 Toast 提示清空条目数；</li>
+                <li><strong>秒回视觉动效</strong>：针对命中的缓存，前端展示「⚡ Redis 缓存秒回」徽章，并完整平滑回放逐字流式打字与工具调用状态。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>🧪 5. 工程化落地与自动化测试验证</h4>
+              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>11/11 单元测试与接口测试全部 PASS</strong></p>
+              <ul>
+                <li><code>backend/services/cache_service.py</code>：提供 <code>get_cached_response</code>、<code>set_cached_response</code>、<code>calculate_ttl</code>、<code>invalidate_cache_on_write</code>、<code>clear_cache</code>；</li>
+                <li><code>backend/test_redis_cache.py</code>：覆盖 DB 隔离、标点归一化、分级 TTL 策略、写时淘汰断言；</li>
+                <li><code>backend/test_api_cache.py</code>：覆盖 SSE 流式秒回、多轮历史回放、<code>force_refresh</code> 强刷直通模型、清空接口端点测试。</li>
+              </ul>
+            </div>
+          </div>
+
         </section>
 
         <!-- 十、技术栈选型 -->
@@ -566,12 +656,12 @@
               </ul>
             </div>
             <div class="card">
-              <h4>🗄️ 知识管理</h4>
+              <h4>🗄️ 知识与缓存管理</h4>
               <ul>
-                <li><strong>Pinecone / Weaviate</strong> — 向量数据库</li>
-                <li><strong>Elasticsearch</strong> — 全文检索</li>
-                <li><strong>Redis</strong> — 会话缓存 + 短期记忆</li>
-                <li><strong>PostgreSQL + pgvector</strong> — 业务数据</li>
+                <li><strong>Chroma / Pinecone</strong> — 向量数据库 (BGE-M3 1024 维)</li>
+                <li><strong>Elasticsearch / BM25</strong> — 全文检索与容灾降级</li>
+                <li><strong>Redis (DB 1)</strong> — 问答秒回缓存 + 动态分级 TTL (10m/1h/24h) + 写时淘汰 (Evict-on-Write) + 会话短期记忆</li>
+                <li><strong>PostgreSQL 18</strong> — 员工/假期/日程/工单业务数据持久化</li>
               </ul>
             </div>
             <div class="card">

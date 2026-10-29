@@ -46,6 +46,7 @@ class AgentEngine:
         yield {"type": "status", "content": "thinking"}
 
         # 0. 前置输入安全、越权探针、偏离业务与情绪护栏审查 (Guardrails Fast-Fail & Moderation)
+        yield {"type": "node_enter", "content": "guardrail_check"}
         guardrail_res = evaluate_guardrails(user_message, self.conversation_history)
 
         # 场景 A: 拦截恶意提示词注入/越狱、数据越权刺探、或无业务意图的辱骂挑衅
@@ -53,13 +54,10 @@ class AgentEngine:
             logger.warning(f"🚨 [Guardrails 拦截] 类别: {guardrail_res.category} | 原因: {guardrail_res.reason}")
             reply = guardrail_res.refusal_message
             yield {"type": "status", "content": "responding"}
-            yield {"type": "node_enter", "content": "reasoning"}
-            yield {"type": "node_enter", "content": "response_generation"}
             for i in range(0, len(reply), 6):
                 yield {"type": "token", "content": reply[i:i+6]}
                 await asyncio.sleep(0.015)
-            yield {"type": "node_exit", "content": "response_generation"}
-            yield {"type": "node_exit", "content": "reasoning"}
+            yield {"type": "node_exit", "content": "guardrail_check"}
             self.conversation_history.append({"role": "user", "content": user_message})
             self.conversation_history.append({"role": "assistant", "content": reply})
             yield {"type": "message_complete", "content": reply}
@@ -71,18 +69,18 @@ class AgentEngine:
             logger.info(f"🧭 [Guardrails 引导] 类别: {guardrail_res.category} | 原因: {guardrail_res.reason}")
             reply = guardrail_res.refusal_message
             yield {"type": "status", "content": "responding"}
-            yield {"type": "node_enter", "content": "reasoning"}
-            yield {"type": "node_enter", "content": "response_generation"}
             for i in range(0, len(reply), 6):
                 yield {"type": "token", "content": reply[i:i+6]}
                 await asyncio.sleep(0.015)
-            yield {"type": "node_exit", "content": "response_generation"}
-            yield {"type": "node_exit", "content": "reasoning"}
+            yield {"type": "node_exit", "content": "guardrail_check"}
             self.conversation_history.append({"role": "user", "content": user_message})
             self.conversation_history.append({"role": "assistant", "content": reply})
             yield {"type": "message_complete", "content": reply}
             yield {"type": "status", "content": "idle"}
             return
+
+        # 前置安全护栏审查通过，正常流转至状态图业务处理
+        yield {"type": "node_exit", "content": "guardrail_check"}
 
         # 场景 C: 合规业务请求（如伴随负面情绪，将情绪安抚与工单升级指引注入状态机）
         # 构建历史消息列表

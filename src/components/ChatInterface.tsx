@@ -188,6 +188,7 @@ export default function ChatInterface({
         const nodeName = event.content;
         setActiveNode(nodeName);
         const nodeSummaries: Record<string, string> = {
+          guardrail_check: '前置安全拦截、意图对齐与领域边界审查',
           knowledge_retrieval: '检索企业制度向量知识切片 (RAG)',
           reasoning: 'ReAct 规划决策与工具路由',
           tool_execution: '准备执行具体企业业务工具',

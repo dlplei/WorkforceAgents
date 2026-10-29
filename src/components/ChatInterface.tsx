@@ -61,10 +61,11 @@ export default function ChatInterface({
   const [isClearingCache, setIsClearingCache] = useState(false);
 
   const handleSubmit = useCallback(async (forcedQuery?: string, forceRefresh: boolean = false) => {
-    const userMessage = (forcedQuery !== undefined ? forcedQuery : input).trim();
+    const isForced = typeof forcedQuery === 'string';
+    const userMessage = (isForced ? forcedQuery : input).trim();
     if (!userMessage || isRunning) return;
 
-    if (!forcedQuery) {
+    if (!isForced) {
       if (messages.length === 0) {
         onFirstMessageSent?.(userMessage);
       }
@@ -526,7 +527,7 @@ export default function ChatInterface({
             />
           </div>
           <button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             disabled={!input.trim() || isRunning}
             className="p-3 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl transition-colors"
           >

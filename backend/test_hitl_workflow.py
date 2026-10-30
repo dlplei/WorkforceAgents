@@ -31,17 +31,35 @@ def test_build_hitl_action_request():
     assert "2026-10-08 至 2026-10-10" in req.summary["请假周期"]
     print("✅ 1. 休假申请 HITL 载荷构建测试通过")
 
-    # 2. 证明开具
-    doc_args = {
+    # 2. 证明开具 (默认中文版及多语言鲁棒性验证)
+    doc_args_1 = {
         "doc_type": "employment_proof",
         "purpose": "申请申根旅游签证",
-        "language": "zh",
+        "language": "中文",
     }
-    doc_req = build_hitl_action_request("generate_document", doc_args)
-    assert doc_req.category == "document"
-    assert "在职证明" in doc_req.summary["证明类别"]
-    assert "电子公章" in doc_req.summary["印章效力"]
-    print("✅ 2. 证明开具 HITL 载荷构建测试通过")
+    doc_req_1 = build_hitl_action_request("generate_document", doc_args_1)
+    assert doc_req_1.category == "document"
+    assert "在职证明" in doc_req_1.summary["证明类别"]
+    assert "中文版" in doc_req_1.summary["语言版本"]
+    assert "电子公章" in doc_req_1.summary["印章效力"]
+
+    # 2.1 用户修改诉求为“语言为中文版”或无 language 默认
+    doc_args_2 = {
+        "doc_type": "在职证明",
+        "purpose": "办理签证",
+    }
+    doc_req_2 = build_hitl_action_request("generate_document", doc_args_2)
+    assert "中文版" in doc_req_2.summary["语言版本"]
+
+    # 2.2 用户指定英文版
+    doc_args_3 = {
+        "doc_type": "在职证明",
+        "purpose": "办理签证",
+        "language": "英文",
+    }
+    doc_req_3 = build_hitl_action_request("generate_document", doc_args_3)
+    assert "英文版" in doc_req_3.summary["语言版本"]
+    print("✅ 2. 证明开具 HITL 载荷及多语言版本识别测试通过")
 
     # 3. HR 工单
     ticket_args = {

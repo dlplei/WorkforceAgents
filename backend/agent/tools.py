@@ -419,13 +419,24 @@ async def handle_generate_document(params: dict) -> dict:
 
 registry.register(
     name="generate_document",
-    description="生成各类证明文件（在职证明、收入证明等）。",
+    description="生成各类证明文件（在职证明、收入证明、离职证明等）。默认语言版本为中文，仅当用户明确要求英文时才开具英文版。",
     parameters={
         "type": "object",
         "properties": {
-            "doc_type": {"type": "string", "description": "证明类型", "enum": ["在职证明", "收入证明", "离职证明"]},
-            "purpose": {"type": "string", "description": "用途（如：贷款、签证等）"},
-            "language": {"type": "string", "description": "语言版本", "enum": ["中文", "英文"]},
+            "doc_type": {
+                "type": "string",
+                "description": "证明类型",
+                "enum": ["在职证明", "收入证明", "离职证明", "实习证明"],
+            },
+            "purpose": {
+                "type": "string",
+                "description": "用途（如：签证、贷款、购房、子女入学等）",
+            },
+            "language": {
+                "type": "string",
+                "description": "语言版本：'中文' 或 '英文'。若用户未特别说明英文，一律默认为'中文'",
+                "enum": ["中文", "英文"],
+            },
         },
         "required": ["doc_type"],
     },
@@ -559,8 +570,15 @@ def build_hitl_action_request(
         dt = arguments.get("doc_type", "employment_proof")
         dt_label = doc_type_names.get(dt, dt)
         purpose = arguments.get("purpose", "办理业务")
-        lang = arguments.get("language", "zh")
-        lang_label = "中文版 (电子公章)" if lang == "zh" else "英文版 (电子公章)"
+        
+        # 兼容 "中文"、"zh"、"英文"、"en" 等不同写法，未指明或包含中文词根时默认为中文版
+        raw_lang = str(arguments.get("language", "中文")).strip().lower()
+        if any(keyword in raw_lang for keyword in ["英", "en", "english"]):
+            lang_label = "英文版 (电子公章)"
+            arguments["language"] = "英文"
+        else:
+            lang_label = "中文版 (电子公章)"
+            arguments["language"] = "中文"
 
         return HitlActionRequest(
             action_id=action_id,

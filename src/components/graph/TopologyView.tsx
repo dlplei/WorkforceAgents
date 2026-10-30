@@ -40,17 +40,29 @@ export default function TopologyView({
         <div className="flex items-center justify-between mb-1">
           <span className="font-medium flex items-center space-x-1.5">
             <span
-              className={`w-2 h-2 rounded-full ${isRunning ? 'bg-cyan-400 animate-ping' : 'bg-slate-500'}`}
+              className={`w-2 h-2 rounded-full ${
+                isRunning
+                  ? 'bg-cyan-400 animate-ping'
+                  : activeNode === 'hitl_gate'
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-slate-500'
+              }`}
             />
             <span>
               {isRunning
                 ? `当前运行: ${NODE_DEFINITIONS[activeNode]?.label || activeNode || '思考中'}`
+                : activeNode === 'hitl_gate'
+                ? '🛡️ 人机协同门禁挂起中: 等待员工核验与确认'
                 : traceSteps.length > 0
                 ? '✓ 本轮工作流执行完毕'
                 : '就绪，等待提问以启动状态图'}
             </span>
           </span>
-          {isRunning && <span className="text-[10px] text-cyan-400 font-mono animate-pulse">流转中</span>}
+          {isRunning ? (
+            <span className="text-[10px] text-cyan-400 font-mono animate-pulse">流转中</span>
+          ) : activeNode === 'hitl_gate' ? (
+            <span className="text-[10px] text-amber-400 font-mono animate-pulse">挂起等待</span>
+          ) : null}
         </div>
         {isRunning && currentToolCalls.length > 0 && (
           <div className="text-[11px] text-amber-300 font-mono mt-1 truncate">

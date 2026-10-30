@@ -33,12 +33,15 @@ export default function InteractiveGraphSvg({
     __end__: { x: (svgWidth / 2) - (46 * scale), y: 356 * scale, w: 92 * scale, h: 26 * scale },
   };
 
-  const isNodeActive = (id: string) =>
-    (activeNode === id ||
-      (id === 'reasoning' && activeNode === 'response_generation') ||
-      (id === 'guardrail_check' && activeNode === 'guardrail_check') ||
-      (id === 'hitl_gate' && (activeNode === 'hitl_gate' || activeNode === 'hitl_request'))) &&
-    isRunning;
+  const isNodeActive = (id: string) => {
+    if (id === 'hitl_gate' && (activeNode === 'hitl_gate' || activeNode === 'hitl_request')) {
+      return true;
+    }
+    return (
+      (activeNode === id || (id === 'reasoning' && activeNode === 'response_generation')) &&
+      isRunning
+    );
+  };
   const isNodeVisited = (id: string) => Boolean(nodeVisitCounts[id]);
 
   const isShortCircuitPathActive =

@@ -176,7 +176,11 @@ export default function ChatInterface({
       }]);
     } finally {
       setIsRunning(false);
-      setActiveNode('');
+      if (!hitlRequestRef.current) {
+        setActiveNode('');
+      } else {
+        setActiveNode('hitl_gate');
+      }
       setCurrentToolCalls([]);
       setCurrentToolResults([]);
       toolCallsRef.current = [];
@@ -266,30 +270,42 @@ export default function ChatInterface({
         setCurrentHitlRequest(hitlData);
         setActiveNode('hitl_gate');
         setTraceSteps((prev) => [
-          ...prev,
+          ...prev.map((s) => (s.status === 'running' ? { ...s, status: 'completed' as const } : s)),
           {
             id: `step-${Date.now()}-hitl-${hitlData.action_id}`,
             node: 'hitl_gate',
             timestamp: Date.now(),
-            status: 'completed',
-            summary: `🛡️ [HITL门禁挂起] 拦截写操作: ${hitlData.title}，已推送人机交互确认卡片`,
+            status: 'running',
+            summary: `🛡️ [HITL门禁挂起] 拦截写操作: ${hitlData.title}，等待员工审批`,
             details: hitlData.summary,
           },
         ]);
         break;
       }
       case 'message_complete': {
-        setTraceSteps((prev) => [
-          ...prev.map((s) => (s.status === 'running' ? { ...s, status: 'completed' as const } : s)),
-          {
-            id: `step-${Date.now()}-end`,
-            node: '__end__',
-            timestamp: Date.now(),
-            duration: 10,
-            status: 'completed',
-            summary: '状态机流转完成，输出已归档',
-          },
-        ]);
+        const hasHitl = Boolean(hitlRequestRef.current);
+        if (!hasHitl) {
+          setTraceSteps((prev) => [
+            ...prev.map((s) => (s.status === 'running' ? { ...s, status: 'completed' as const } : s)),
+            {
+              id: `step-${Date.now()}-end`,
+              node: '__end__',
+              timestamp: Date.now(),
+              duration: 10,
+              status: 'completed',
+              summary: '状态机流转完成，输出已归档',
+            },
+          ]);
+        } else {
+          // 存在 HITL 挂起时，流程未终结，不要输出 __end__ 节点，保留 hitl_gate 处于挂起等待中
+          setTraceSteps((prev) =>
+            prev.map((s) =>
+              s.node !== 'hitl_gate' && s.status === 'running'
+                ? { ...s, status: 'completed' as const }
+                : s
+            )
+          );
+        }
         setMessages((prev) => [
           ...prev,
           {
@@ -379,17 +395,42 @@ export default function ChatInterface({
           )
         );
 
+        // 1. 先把处于 running 挂起的 hitl_gate 步骤标记为 completed
+        // 2. 追加工具执行落库步骤 (tool_execution)
+        // 3. 追加状态机归档终结步骤 (__end__)
         setTraceSteps((prev) => [
-          ...prev,
+          ...prev.map((s) =>
+            s.node === 'hitl_gate' && s.status === 'running'
+              ? {
+                  ...s,
+                  status: 'completed' as const,
+                  duration: Math.max(10, Date.now() - s.timestamp),
+                  summary: `🛡️ [HITL人工授权通过] 员工已核验并批准执行: ${hitlReq.title}`,
+                }
+              : s
+          ),
           {
-            id: `step-${Date.now()}-hitl-approved`,
-            node: 'hitl_gate',
+            id: `step-${Date.now()}-tool-exec`,
+            node: 'tool_execution',
             timestamp: Date.now(),
+            duration: 15,
             status: 'completed',
-            summary: `🛡️ [HITL人工授权通过] 已正式执行: ${hitlReq.tool_name} (单号: ${refId})`,
+            summary: `⚡ [工具落库执行] ${hitlReq.tool_name} 业务已正式落库 (单号: ${refId})`,
             details: data,
           },
+          {
+            id: `step-${Date.now()}-end`,
+            node: '__end__',
+            timestamp: Date.now() + 15,
+            duration: 10,
+            status: 'completed',
+            summary: '🏁 业务流程全生命周期流转完成，输出已归档',
+          },
         ]);
+
+        hitlRequestRef.current = null;
+        setActiveNode('__end__');
+        setTimeout(() => setActiveNode(''), 1200);
         setToastMessage(`✅ 已成功提交并流转: ${hitlReq.title}`);
       } else {
         setToastMessage(`❌ 执行失败: ${res.error || '未知错误'}`);
@@ -429,16 +470,32 @@ export default function ChatInterface({
       )
     );
 
+    // 1. 把处于 running 挂起的 hitl_gate 步骤标记为 failed / 取消
+    // 2. 追加状态机归档终结步骤 (__end__)
     setTraceSteps((prev) => [
-      ...prev,
+      ...prev.map((s) =>
+        s.node === 'hitl_gate' && s.status === 'running'
+          ? {
+              ...s,
+              status: 'failed' as const,
+              duration: Math.max(10, Date.now() - s.timestamp),
+              summary: `🛡️ [HITL人工取消] 员工主动放弃本次操作: ${hitlReq.title}`,
+            }
+          : s
+      ),
       {
-        id: `step-${Date.now()}-hitl-rejected`,
-        node: 'hitl_gate',
+        id: `step-${Date.now()}-end`,
+        node: '__end__',
         timestamp: Date.now(),
-        status: 'failed',
-        summary: `🛡️ [HITL人工取消] 员工主动放弃本次写操作: ${hitlReq.title}`,
+        duration: 10,
+        status: 'completed',
+        summary: '🏁 申请草稿已安全撤销，工作流短路终结',
       },
     ]);
+
+    hitlRequestRef.current = null;
+    setActiveNode('__end__');
+    setTimeout(() => setActiveNode(''), 1200);
     setToastMessage('已取消该项操作');
   };
 
@@ -528,9 +585,17 @@ export default function ChatInterface({
             </div>
           </div>
           <div className="flex items-center space-x-2">
-            {isRunning && (
-              <span className="text-xs text-cyan-400 flex items-center space-x-1">
-                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse"></span>
+            {(isRunning || activeNode === 'hitl_gate') && (
+              <span
+                className={`text-xs flex items-center space-x-1 ${
+                  activeNode === 'hitl_gate' ? 'text-amber-400' : 'text-cyan-400'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                    activeNode === 'hitl_gate' ? 'bg-amber-400' : 'bg-cyan-400'
+                  }`}
+                ></span>
                 <span>{getNodeLabel(activeNode)}</span>
               </span>
             )}
@@ -1023,6 +1088,8 @@ function getNodeLabel(node: string): string {
     'tool_execution': '🔧 执行工具...',
     'response_generation': '💬 生成回复...',
     'context_loading': '📋 加载上下文...',
+    'guardrail_check': '🛡️ 安全审查...',
+    'hitl_gate': '🛡️ 等待人工确认...',
   };
   return labels[node] || '处理中...';
 }

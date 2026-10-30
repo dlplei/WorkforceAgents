@@ -36,7 +36,11 @@ export default function TraceView({
       <div className="flex items-center justify-between p-2.5 bg-slate-800/50 rounded-lg border border-slate-700/50 text-xs">
         <span className="text-slate-400">总计耗时</span>
         <span className="font-mono text-cyan-400 font-medium">
-          {totalExecutionTime > 0 ? `${(totalExecutionTime / 1000).toFixed(2)}s` : '进行中...'}
+          {traceSteps.some((s) => s.node === 'hitl_gate' && s.status === 'running')
+            ? '⏳ 等待人工授权中'
+            : totalExecutionTime > 0
+            ? `${(totalExecutionTime / 1000).toFixed(2)}s`
+            : '进行中...'}
         </span>
       </div>
 
@@ -50,14 +54,19 @@ export default function TraceView({
             icon: Activity,
           };
           const Icon = nodeDef.icon;
-          const isCurrentActive = isRunning && activeNode === step.node && idx === traceSteps.length - 1;
+          const isPendingHitl = step.node === 'hitl_gate' && step.status === 'running';
+          const isCurrentActive =
+            (isRunning && activeNode === step.node && idx === traceSteps.length - 1) ||
+            (isPendingHitl && idx === traceSteps.length - 1);
 
           return (
             <div key={step.id} className="relative group">
               {/* 时间轴圆点 */}
               <div
                 className={`absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full border ${
-                  isCurrentActive
+                  isPendingHitl
+                    ? 'bg-amber-400 border-amber-200 animate-pulse ring-2 ring-amber-400/40'
+                    : isCurrentActive
                     ? 'bg-cyan-400 border-cyan-200 animate-ping'
                     : step.status === 'failed'
                     ? 'bg-red-500 border-red-300'
@@ -65,15 +74,26 @@ export default function TraceView({
                 }`}
               />
 
-              <div className="bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/50 rounded-lg p-2.5 transition-colors">
+              <div
+                className={`border rounded-lg p-2.5 transition-colors ${
+                  isPendingHitl
+                    ? 'bg-amber-950/20 hover:bg-amber-950/30 border-amber-600/40'
+                    : 'bg-slate-800/40 hover:bg-slate-800/70 border-slate-700/50'
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-1.5 min-w-0">
-                    <Icon className={`w-3.5 h-3.5 ${nodeDef.color} flex-shrink-0`} />
+                    <Icon className={`w-3.5 h-3.5 ${isPendingHitl ? 'text-amber-400' : nodeDef.color} flex-shrink-0`} />
                     <span className="text-xs font-medium text-slate-200 truncate">
                       Step {idx + 1}: {nodeDef.label}
                     </span>
                   </div>
                   <div className="flex items-center space-x-2 flex-shrink-0">
+                    {isPendingHitl && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse font-mono">
+                        ⏳ 挂起等待确认
+                      </span>
+                    )}
                     {step.duration !== undefined && (
                       <span className="text-[10px] font-mono text-slate-400">
                         {step.duration < 1000 ? `${step.duration}ms` : `${(step.duration / 1000).toFixed(2)}s`}

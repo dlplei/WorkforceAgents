@@ -403,50 +403,52 @@
 11. 创建审批流
 12. 返回申请编号，设置状态追踪</code></pre>
 
-          <h3>Agent 回复示例</h3>
+          <h3>Agent 回复与原生 HITL 交互卡片</h3>
           <div class="note">
             我已检查你的年假余额和公司年假政策。你当前剩余年假为 7 天，计划申请 2026 年 10 月 8 日至 10 月 10 日，共 3 个工作日，符合《员工年假管理办法》的申请条件。<br /><br />
-            申请摘要如下：<br />
-            - 假期类型：年假<br />
-            - 日期：2026-10-08 至 2026-10-10<br />
-            - 天数：3 天<br />
-            - 审批人：你的直属经理王经理<br /><br />
-            请确认是否提交该申请？
+            <strong>申请草案已就绪，已为您生成人机协同门禁卡片：</strong><br />
+            请在下方卡片中核对详细信息无误后，直接点击卡片中的【确认提交执行】按钮正式发起流程，无需在对话框中打字回复确认。<br />
+            <em>（若需要调整日期或证明语言版本，可点击【修改诉求】快速微调，智能体将立即重新生成对应卡片）</em>
           </div>
 
-          <h3>任务状态模型 (Task State)</h3>
+          <h3>任务状态模型 (Task State / HITL Pending)</h3>
           <pre><code>{
   "task_id": "leave-request-20260917-001",
   "employee_id": "E10293",
   "intent": "annual_leave_request",
   "status": "waiting_for_user_confirmation",
+  "hitl_gate_status": "running (suspended)",
   "steps_completed": [
-    "identity_verified",
-    "leave_balance_checked",
-    "policy_validated",
-    "calendar_conflict_checked",
-    "draft_generated"
+    "guardrail_check",
+    "knowledge_retrieval",
+    "reasoning",
+    "hitl_gate_interception"
   ],
-  "pending_action": "user_confirm",
-  "context": {
-    "leave_type": "annual",
-    "start_date": "2026-10-08",
-    "end_date": "2026-10-10",
-    "days": 3,
-    "remaining_balance": 7,
-    "approver": "王经理",
-    "policy_ref": "《员工年假管理办法》第3.2条"
+  "hitl_request": {
+    "action_id": "hitl_submit_leave_request_1730000000000",
+    "tool_name": "submit_leave_request",
+    "title": "员工请假申请核验与确认",
+    "risk_level": "medium",
+    "summary": {
+      "申请人工号": "E10293 (张伟)",
+      "假期类型": "年假",
+      "请假周期": "2026-10-08 至 2026-10-10 (共 3 天)",
+      "剩余可用额度": "7 天",
+      "扣减后结余": "4 天",
+      "直接审批主管": "王经理 (M001)",
+      "申请理由": "国庆长假探亲与休整"
+    }
   }
 }</code></pre>
 
-          <h3>完整工作流六步法</h3>
+          <h3>完整工作流六步法 (含原生 HITL 门禁挂起与闭环流转)</h3>
           <div class="grid-3">
             <div class="card"><h4>① 意图理解</h4><p>NLU 解析 → 加载员工 Profile → 多轮对话澄清 → 确定任务类型与参数</p></div>
             <div class="card"><h4>② 策略规划</h4><p>生成 Task Graph → 确定工具调用顺序 → 识别前置条件 → 评估 Policy Grounding</p></div>
-            <div class="card"><h4>③ 工具执行</h4><p>调用 HRIS 查询 → 检索政策知识库 → 调用计算引擎 → 结果校验与重试</p></div>
-            <div class="card"><h4>④ 结果整合</h4><p>多源信息融合 → 生成可读方案 → 标注关键决策点 → 提供选项对比</p></div>
-            <div class="card"><h4>⑤ 人工确认</h4><p>展示操作摘要 → 用户确认/修改/取消 → 敏感操作二次验证 → 审批触发</p></div>
-            <div class="card"><h4>⑥ 执行追踪</h4><p>提交审批/执行变更 → 状态推送 → 异常处理与升级 → 更新 Memory</p></div>
+            <div class="card"><h4>③ 门禁拦截</h4><p>写操作工具在入库前瞬间拦截 → 生成结构化凭据 → 推送 HITL 交互卡片并挂起</p></div>
+            <div class="card"><h4>④ 诉求动态微调</h4><p>用户点击【修改诉求】提出参数变更 → 模型即刻重新携带参数调用工具刷新卡片</p></div>
+            <div class="card"><h4>⑤ 人工确认 (HITL)</h4><p>员工在卡片点击【确认提交执行】(POST /api/hitl/action) → 门禁放行入库生成审批单号</p></div>
+            <div class="card"><h4>⑥ 执行追踪闭环</h4><p>挂起态不推入 END；确认后严格按 hitl_gate ➔ tool_execution ➔ END 时序真实归档</p></div>
           </div>
         </section>
 
@@ -842,18 +844,42 @@
               </ul>
             </div>
             <div class="card">
-              <h4>🔒 执行层零信任隔离 (tools.py)</h4>
-              <p style="font-size:12px; color:var(--muted); margin-top:-4px;"><strong>L4 代码级硬 RBAC 与数据沙箱</strong></p>
+              <h4>🔒 执行层零信任隔离与 HITL (tools.py / main.py)</h4>
+              <p style="font-size:12px; color:var(--muted); margin-top:-4px;"><strong>L4 原生人机协同门禁 + 代码级硬 RBAC</strong></p>
               <ul>
-                <li><strong>工号边界硬性校验</strong>：普通员工（如 <code>E10293</code>）执行工具时，若入参涉及其他工号（如 <code>E10001</code>），底层工具直接抛出 RBAC 拦截异常；</li>
-                <li><strong>不依赖大模型自觉</strong>：即使 LLM 被越狱诱导生成非法的跨工号工具调用，代码层直接拦截；</li>
-                <li><strong>工单服务全生命周期追踪</strong>：打通本地 PostgreSQL 与 ServiceNow 适配器双写，支持申诉进度可查；</li>
-                <li><strong>全链路流式审计轨迹</strong>：全流程事件记录到 SSE 流并在前端实时可视化反馈。</li>
+                <li><strong>高风险写操作原生拦截</strong>：涉及 <code>submit_leave_request</code>、<code>generate_document</code>、<code>create_hr_ticket</code> 强行挂起拦截，阻止直接落库；</li>
+                <li><strong>工号边界硬性校验</strong>：普通员工（如 <code>E10293</code>）执行工具时，若入参涉及其他工号，底层工具抛出 RBAC 异常；</li>
+                <li><strong>证明开具默认中文规约</strong>：在职/收入证明默认开具中文版（含电子公章），多语言别名泛化匹配；</li>
+                <li><strong>卡片微调即刻响应</strong>：员工修改诉求时，模型即刻携带新参数重调工具，重新下发交互卡片。</li>
               </ul>
             </div>
           </div>
 
-          <h4>3.3 本系统的实际端到端执行链路与决策流转（图内 vs 图外判定）</h4>
+          <h4>3.3 原生人机协同安全门禁体系 (Human-in-the-Loop, HITL 实装细则)</h4>
+          <p class="lead">针对状态变更与具有法律效力的人事写操作，系统坚决杜绝“大模型自主落库”与“文本回复确认”的双重缺陷，在 LangGraph 引擎底层实装了<strong>原生结构化 HITL 交互门禁</strong>闭环：</p>
+
+          <div class="grid" style="margin: 16px 0;">
+            <div class="card">
+              <h4>🛡️ 1. 图内拦截挂起与 Trace 时序保真</h4>
+              <p style="font-size:13px; color:var(--muted);"><strong>Suspended 挂起态 vs 假终结</strong></p>
+              <ul>
+                <li><strong>拦截写操作</strong>：工具节点识别出 <code>confirmation</code> 权限级别且无授权凭据时，打断直接入库，通过 SSE 触发 <code>hitl_request</code> 载荷；</li>
+                <li><strong>Trace 挂起抑制</strong>：等待确认期间，状态机严格停留在 <code>hitl_gate</code>（标记为 <code>running</code>，提示 <code>⏳ 挂起等待确认</code>），<strong>坚决阻止向前端推入 <code>__end__</code> 节点</strong>；</li>
+                <li><strong>拓扑视图高亮</strong>：画布中的 <code>hitl_gate</code> 持续保持琥珀色呼吸灯与挂起 Banner，直至用户决策。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>📑 2. 证明默认中文规约与修改即刻响应</h4>
+              <p style="font-size:13px; color:var(--muted);"><strong>规范化默认值与多轮微调闭环</strong></p>
+              <ul>
+                <li><strong>默认中文版规范</strong>：开具证明（<code>generate_document</code>）默认以中文版（含电子公章）为基准，未明确要求英文时一律默认中文版，避免因涉外常识导致英文倒错；</li>
+                <li><strong>多语言入参鲁棒匹配</strong>：兼容 <code>"中文"</code>、<code>"zh"</code>、<code>"cn"</code>、<code>"英文"</code>、<code>"en"</code> 等自然表达；</li>
+                <li><strong>修改诉求即刻重构</strong>：员工在卡片点击【修改诉求】调整参数后，模型直接重新调用工具，安全门禁瞬间生成最新参数卡片。</li>
+              </ul>
+            </div>
+          </div>
+
+          <h4>3.4 本系统的实际端到端执行链路与决策流转（图内 vs 图外判定）</h4>
           <p>针对架构设计中<strong>「是否调用 LLM / 知识库检索的判断点位于何处」</strong>这一核心疑问，本系统采用<strong>「图外前置微秒级守门短路 + 图内极简 ReAct 循环」</strong>的高效解耦架构：</p>
           <div class="note" style="margin-bottom:16px;">
             <strong>💡 架构决策洞察（为什么不在 LangGraph 图内加路由节点？）：</strong><br />
@@ -958,13 +984,19 @@
     %% 合规业务分支 (启动 LangGraph 状态图)
     Guardrails -- &quot;合规人事业务 (场景 C)&quot; --&gt; LG_START[&quot;LangGraph: START 起点&quot;]
     
-    subgraph LangGraph 状态图
+    subgraph LangGraph 状态机生命周期 (含 HITL 挂起与授权落库)
         LG_START --&gt; KR[&quot;1. knowledge_retrieval\n(知识检索节点)&quot;]
         KR --&gt; Reasoning[&quot;2. reasoning\n(LLM 推理核心)&quot;]
         Reasoning --&gt; Decision{&quot;should_continue\n(是否需要工具)&quot;}
-        Decision -- &quot;调用工具&quot; --&gt; Tool[&quot;3. tool_execution\n(硬性 RBAC 隔离)&quot;]
-        Tool --&gt; Reasoning
-        Decision -- &quot;回答完成&quot; --&gt; LG_END[&quot;END 终点&quot;]
+        Decision -- &quot;只读查询工具&quot; --&gt; ToolRead[&quot;3. tool_execution\n(只读工具 / RBAC 校验)&quot;]
+        ToolRead --&gt; Reasoning
+        Decision -- &quot;高危写操作 (休假/证明/工单)&quot; --&gt; HITLGate{&quot;🛡️ hitl_gate\n(人机协同门禁挂起)&quot;}
+        HITLGate -- &quot;发射 hitl_request 挂起&quot; --&gt; CardWait[&quot;UI 结构化交互确认卡片\n(Trace 保持 running 挂起)&quot;]
+        CardWait -- &quot;点击【修改诉求】(携带新参)&quot; --&gt; Reasoning
+        CardWait -- &quot;点击【取消放弃】&quot; --&gt; LG_END[&quot;END 终点 (草案撤销)&quot;]
+        CardWait -- &quot;点击【确认提交执行】\n(POST /api/hitl/action)&quot; --&gt; ToolWrite[&quot;tool_execution 落库\n(生成正式单号 APR-xxx)&quot;]
+        ToolWrite --&gt; LG_END
+        Decision -- &quot;文本回复完毕&quot; --&gt; LG_END
     end
     
     LG_END --&gt; EndUser</code></pre>

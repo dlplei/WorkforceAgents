@@ -33,6 +33,23 @@ export interface ChatMessage {
   toolResults?: ToolResultInfo[];
   executionTrace?: ExecutionStep[];
   cached?: boolean;
+  hitlRequest?: HitlActionRequest;
+}
+
+// --- HITL (Human-in-the-Loop) Types ---
+export interface HitlActionRequest {
+  action_id: string;
+  tool_name: string;
+  tool_call_id?: string;
+  title: string;
+  category: 'leave' | 'document' | 'ticket' | 'travel' | 'general';
+  summary: Record<string, string | number>;
+  raw_arguments: Record<string, unknown>;
+  status: 'pending' | 'approved' | 'rejected';
+  risk_level: 'low' | 'medium' | 'high';
+  created_at: number;
+  resultMessage?: string;
+  resultData?: unknown;
 }
 
 // --- Tool Types ---
@@ -83,6 +100,7 @@ export type AgentEvent =
   | { type: 'token'; content: string }
   | { type: 'tool_call'; data: ToolCallInfo }
   | { type: 'tool_result'; data: ToolResultInfo }
+  | { type: 'hitl_request'; data: HitlActionRequest }
   | { type: 'message_complete'; content: string; cached?: boolean }
   | { type: 'error'; content: string }
   | { type: 'status'; content: string }

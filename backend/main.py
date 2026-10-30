@@ -85,6 +85,15 @@ class ChatRequest(BaseModel):
     history: Optional[List[Dict[str, Any]]] = None
     config: Optional[LLMConfig] = None
     force_refresh: Optional[bool] = False  # 强制跳过缓存重新生成，并在完成时覆写缓存
+    hitl_confirmed: Optional[Dict[str, Any]] = None  # 原生 HITL 授权执行载荷
+
+
+class HitlDecisionRequest(BaseModel):
+    action_id: str
+    tool_name: str
+    decision: str  # "approve" | "reject"
+    arguments: Dict[str, Any]
+    comment: Optional[str] = None
 
 
 class ConfigUpdate(BaseModel):
@@ -149,6 +158,12 @@ async def get_graph_topology():
                 "description": "接收用户提问与历史多轮对话，注入系统 Prompt 与员工身份上下文",
                 "type": "control"
             },
+            "guardrail_check": {
+                "name": "guardrail_check",
+                "label": "安全护栏 (Guardrails)",
+                "description": "输入层意图安全审查、Prompt Injection 拦截、越权刺探与负面情绪感知",
+                "type": "control"
+            },
             "knowledge_retrieval": {
                 "name": "knowledge_retrieval",
                 "label": "知识检索 (RAG)",
@@ -167,6 +182,12 @@ async def get_graph_topology():
                 "description": "分发执行具体企业工具（假期、差旅预算、工单申请等），生成 ToolMessage 回传",
                 "type": "task"
             },
+            "hitl_gate": {
+                "name": "hitl_gate",
+                "label": "人机协同门禁 (HITL)",
+                "description": "高风险写操作拦截挂起，生成结构化交互卡片等待员工核对与人工授权 (Approve/Reject)",
+                "type": "control"
+            },
             "__end__": {
                 "name": "END",
                 "label": "回复完成 / 终点",
@@ -184,6 +205,21 @@ async def get_graph_topology():
                 "description": meta.get("description", ""),
                 "type": meta.get("type", "task"),
             })
+        # 补充前置安全护栏与人机协同门禁节点，确保架构拓扑完整反映控制链路
+        if not any(node["id"] == "guardrail_check" for node in nodes):
+            nodes.insert(1, {
+                "id": "guardrail_check",
+                "label": node_metadata["guardrail_check"]["label"],
+                "description": node_metadata["guardrail_check"]["description"],
+                "type": "control",
+            })
+        if not any(node["id"] == "hitl_gate" for node in nodes):
+            nodes.insert(-1, {
+                "id": "hitl_gate",
+                "label": node_metadata["hitl_gate"]["label"],
+                "description": node_metadata["hitl_gate"]["description"],
+                "type": "control",
+            })
 
         edges = []
         for e in compiled_graph.edges:
@@ -192,15 +228,37 @@ async def get_graph_topology():
                 "target": e.target,
                 "conditional": getattr(e, "conditional", False)
             })
+        # 补充 HITL 与 Guardrails 拓扑边
+        edges.append({"source": "tool_execution", "target": "hitl_gate", "conditional": True, "label": "写操作门禁挂起"})
+        edges.append({"source": "hitl_gate", "target": "tool_execution", "conditional": True, "label": "人工授权执行"})
+        edges.append({"source": "hitl_gate", "target": "__end__", "conditional": True, "label": "撤销/放弃"})
+
+        mermaid_str = (
+            "graph TD;\n"
+            "  __start__([START]):::first --> guardrail_check;\n"
+            "  guardrail_check -->|合规放行| knowledge_retrieval;\n"
+            "  guardrail_check -.->|快速短路| __end__;\n"
+            "  knowledge_retrieval --> reasoning;\n"
+            "  reasoning -.->|直接答复| __end__;\n"
+            "  reasoning -.->|调用工具| tool_execution;\n"
+            "  tool_execution -->|只读结果回流| reasoning;\n"
+            "  tool_execution -.->|写操作门禁挂起| hitl_gate;\n"
+            "  hitl_gate -.->|人工授权执行| tool_execution;\n"
+            "  hitl_gate -.->|取消/放弃| __end__;\n"
+            "  classDef first fill:#064e3b,stroke:#059669,stroke-width:2px,color:#a7f3d0;\n"
+            "  classDef hitl fill:#451a03,stroke:#d97706,stroke-width:2px,color:#fde68a;\n"
+            "  class hitl_gate hitl;"
+        )
 
         return {
             "nodes": nodes,
             "edges": edges,
-            "mermaid": compiled_graph.draw_mermaid(),
+            "mermaid": mermaid_str,
             "state_schema": {
                 "messages": "Annotated[Sequence[BaseMessage], add_messages]",
                 "retrieved_docs": "List[Dict[str, Any]]",
-                "emotion_instruction": "Optional[str]"
+                "emotion_instruction": "Optional[str]",
+                "hitl_confirmed": "Optional[Dict[str, Any]]"
             }
         }
     except Exception as e:
@@ -282,9 +340,9 @@ async def chat(req: ChatRequest):
     cfg = get_config()
     current_model = (req.config.model if req.config and req.config.model else None) or cfg.model
 
-    # 尝试命中 Redis 问答缓存（若启用 force_refresh 则直接绕过）
-    if req.force_refresh:
-        logger.info(f"🔄 [强刷模式 force_refresh] 跳过 Redis 缓存，强制直连大模型重新生成: '{req.message[:50]}'")
+    # 尝试命中 Redis 问答缓存（若启用 force_refresh 或包含 HITL 确认执行载荷则直接绕过）
+    if req.force_refresh or req.hitl_confirmed:
+        logger.info(f"🔄 [跳过缓存] force_refresh={req.force_refresh}, hitl_confirmed={bool(req.hitl_confirmed)}: '{req.message[:50]}'")
         cached_item = None
     else:
         cached_item = get_cached_response(req.message, model=current_model)
@@ -351,8 +409,9 @@ async def chat(req: ChatRequest):
         tools_called = []
         captured_tool_calls = []
         captured_tool_results = []
+        has_hitl_request = False
         try:
-            async for event in engine.run(req.message):
+            async for event in engine.run(req.message, hitl_confirmed=req.hitl_confirmed):
                 ev_type = event.get("type")
                 if ev_type == "tool_call":
                     tool_data = event.get("data", {})
@@ -369,14 +428,17 @@ async def chat(req: ChatRequest):
                         evicted = invalidate_cache_on_write(t_name)
                         if evicted > 0:
                             logger.info(f"🧹 [Evict-on-Write] 写操作 '{t_name}' 成功执行，已联动淘汰 {evicted} 条陈旧缓存")
+                elif ev_type == "hitl_request":
+                    has_hitl_request = True
+                    logger.info(f"🛡️ [HITL Push] 捕获人机协同事件，向前端推送结构化交互确认卡片: {event.get('data', {}).get('title')}")
                 elif ev_type == "message_complete":
                     full_content = event.get("content", "")
 
                 # 格式化为 SSE
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-            # 正常完成时，将结果缓存入 Redis
-            if full_content:
+            # 正常完成且非 HITL 门禁挂起卡片状态时，将结果缓存入 Redis
+            if full_content and not has_hitl_request and not req.hitl_confirmed:
                 set_cached_response(
                     question=req.message,
                     content=full_content,
@@ -401,6 +463,54 @@ async def chat(req: ChatRequest):
             "X-Cache": "MISS",
         },
     )
+
+
+@app.post("/api/hitl/action")
+async def handle_hitl_action(req: HitlDecisionRequest):
+    """
+    处理原生 HITL (Human-in-the-Loop) 交互卡片操作决策（确认提交 / 取消放弃）
+    """
+    logger.info(f"🛡️ [HITL Action] 收到卡片决策: {req.decision} | 工具: {req.tool_name} | ID: {req.action_id}")
+
+    if req.decision == "reject":
+        return {
+            "success": True,
+            "status": "rejected",
+            "message": "已成功取消该申请操作，未对系统数据产生变更。",
+            "action_id": req.action_id,
+        }
+
+    # 执行确认写操作
+    tool = registry.get(req.tool_name)
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"未找到对应业务工具: {req.tool_name}")
+
+    start_t = asyncio.get_event_loop().time()
+    result = await registry.execute(req.tool_name, req.arguments)
+    duration = asyncio.get_event_loop().time() - start_t
+
+    if result.success:
+        evicted = invalidate_cache_on_write(req.tool_name)
+        if evicted > 0:
+            logger.info(f"🧹 [HITL Action] 写操作 '{req.tool_name}' 成功执行，已淘汰 {evicted} 条缓存")
+        return {
+            "success": True,
+            "status": "approved",
+            "action_id": req.action_id,
+            "tool_name": req.tool_name,
+            "data": result.data,
+            "execution_time": round(duration, 3),
+        }
+    else:
+        logger.error(f"❌ [HITL Action] 写操作 '{req.tool_name}' 执行失败: {result.error}")
+        return {
+            "success": False,
+            "status": "failed",
+            "action_id": req.action_id,
+            "tool_name": req.tool_name,
+            "error": result.error or "执行失败",
+        }
+
 
 
 # ============ Run Server ============

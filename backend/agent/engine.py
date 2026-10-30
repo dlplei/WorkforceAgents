@@ -38,8 +38,12 @@ class AgentEngine:
     def clear_history(self):
         self.conversation_history = []
 
-    async def run(self, user_message: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """运行 Agent 状态图，产生对齐前端协议的 SSE 事件流"""
+    async def run(
+        self,
+        user_message: str,
+        hitl_confirmed: Optional[Dict[str, Any]] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """运行 Agent 状态图，产生对齐前端协议的 SSE 事件流，支持原生 HITL 门禁挂起与授权执行"""
         logger.info(f"🚀 开始执行 Agent 请求: {user_message[:60]}...")
 
         # 初始思考状态
@@ -105,7 +109,9 @@ class AgentEngine:
 
         initial_state = {
             "messages": messages,
-            "emotion_instruction": guardrail_res.emotion_instruction if guardrail_res.has_negative_emotion else None
+            "retrieved_docs": [],
+            "emotion_instruction": guardrail_res.emotion_instruction if guardrail_res.has_negative_emotion else None,
+            "hitl_confirmed": hitl_confirmed,
         }
 
         try:
@@ -140,12 +146,14 @@ class AgentEngine:
                     elif name == "tool_execution":
                         yield {"type": "node_exit", "content": "tool_execution"}
 
-                # 3. 自定义事件（工具调用与工具返回）
+                # 3. 自定义事件（工具调用、工具返回与原生 HITL 门禁挂起请求）
                 elif event_kind == "on_custom_event":
                     if ev.get("name") == "tool_call":
                         yield {"type": "tool_call", "data": ev.get("data")}
                     elif ev.get("name") == "tool_result":
                         yield {"type": "tool_result", "data": ev.get("data")}
+                    elif ev.get("name") == "hitl_request":
+                        yield {"type": "hitl_request", "data": ev.get("data")}
 
                 # 4. 模型流式输出
                 elif event_kind == "on_chat_model_stream":

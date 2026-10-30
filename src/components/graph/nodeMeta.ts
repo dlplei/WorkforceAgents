@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, BookOpen, Brain, Wrench, CheckCircle2, ShieldCheck } from 'lucide-react';
+import { Play, BookOpen, Brain, Wrench, CheckCircle2, ShieldCheck, UserCheck } from 'lucide-react';
 
 export interface NodeMeta {
   name: string;
@@ -71,9 +71,21 @@ export const NODE_DEFINITIONS: Record<string, NodeMeta> = {
     color: 'text-amber-400',
     borderColor: 'border-amber-500/50',
     glowColor: 'shadow-amber-500/30',
-    description: '执行 9 个自主/确认型业务工具（年假查询、差旅预算、工单创建、证明开具等），将 ToolMessage 结果回传状态机。',
+    description: '执行自主与受控型业务工具（年假查询、差旅预算、工单创建、证明开具等），将结果回传状态机。',
     handler: 'tool_execution_node(state)',
     category: 'task',
+  },
+  hitl_gate: {
+    name: 'hitl_gate',
+    label: '人机协同门禁 (HITL)',
+    subLabel: '写操作拦截与人工授权',
+    icon: UserCheck,
+    color: 'text-orange-400',
+    borderColor: 'border-orange-500/50',
+    glowColor: 'shadow-orange-500/30',
+    description: '高风险写操作（提交请假、证明开具、工单提报）拦截挂起，推送结构化核对卡片，等待员工核对参数并一键授权 (Approve/Reject)。',
+    handler: 'Human-in-the-Loop Interceptor & Card Trigger',
+    category: 'control',
   },
   __end__: {
     name: '__end__',

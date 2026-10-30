@@ -160,6 +160,38 @@ def check_calendar_conflicts(employee_id: str, start_date: str, end_date: str) -
             ]
 
 
+_in_memory_approvals: List[Dict[str, Any]] = [
+    {
+        "id": "APR-101",
+        "employee_id": DEFAULT_EMPLOYEE_ID,
+        "applicant": "张明",
+        "type": "年假",
+        "status": "已通过",
+        "date": "2026-04-10",
+        "start_date": "2026-05-02",
+        "end_date": "2026-05-04",
+        "reason": "节假日错峰探亲",
+        "approver": "王经理",
+    }
+]
+
+_in_memory_tickets: List[Dict[str, Any]] = [
+    {
+        "id": "TCK-8801",
+        "employee_id": DEFAULT_EMPLOYEE_ID,
+        "applicant": "张明",
+        "category": "社保公积金",
+        "title": "异地公积金缴存证明开具咨询",
+        "description": "请协助开具近期连续6个月公积金缴存证明",
+        "priority": "medium",
+        "status": "resolved",
+        "assigned_to": "HR服务专员 (李莉)",
+        "created_at": "2026-04-01 10:20:00",
+        "external_system_id": "SN-INC-10921"
+    }
+]
+
+
 def create_approval(
     approval_id: str,
     employee_id: str,
@@ -173,46 +205,70 @@ def create_approval(
     approver: Optional[str] = None
 ) -> Dict[str, Any]:
     """创建审批单记录"""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, approval_type, status, applicant, request_date, start_date, end_date;
-                """,
-                (approval_id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
-            )
-            res = cur.fetchone()
-            conn.commit()
-            return dict(res)
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, approval_type, status, applicant, request_date, start_date, end_date;
+                    """,
+                    (approval_id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
+                )
+                res = cur.fetchone()
+                conn.commit()
+                return dict(res)
+    except Exception:
+        item = {
+            "id": approval_id,
+            "employee_id": employee_id,
+            "applicant": applicant,
+            "type": approval_type,
+            "approval_type": approval_type,
+            "status": status,
+            "date": request_date,
+            "request_date": request_date,
+            "start_date": start_date,
+            "end_date": end_date,
+            "reason": reason,
+            "approver": approver,
+        }
+        _in_memory_approvals.append(item)
+        return item
 
 
 def query_approvals(employee_id: str = DEFAULT_EMPLOYEE_ID, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """查询审批单"""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            if request_id:
-                cur.execute(
-                    """
-                    SELECT id, approval_type AS type, status, applicant, request_date AS date, start_date, end_date, reason, approver
-                    FROM approvals
-                    WHERE id = %s AND employee_id = %s;
-                    """,
-                    (request_id, employee_id)
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, approval_type AS type, status, applicant, request_date AS date, start_date, end_date, reason, approver
-                    FROM approvals
-                    WHERE employee_id = %s
-                    ORDER BY request_date DESC;
-                    """,
-                    (employee_id,)
-                )
-            rows = cur.fetchall()
-            return [dict(r) for r in rows]
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                if request_id:
+                    cur.execute(
+                        """
+                        SELECT id, approval_type AS type, status, applicant, request_date AS date, start_date, end_date, reason, approver
+                        FROM approvals
+                        WHERE id = %s AND employee_id = %s;
+                        """,
+                        (request_id, employee_id)
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, approval_type AS type, status, applicant, request_date AS date, start_date, end_date, reason, approver
+                        FROM approvals
+                        WHERE employee_id = %s
+                        ORDER BY request_date DESC;
+                        """,
+                        (employee_id,)
+                    )
+                rows = cur.fetchall()
+                return [dict(r) for r in rows]
+    except Exception:
+        results = [a for a in _in_memory_approvals if a.get("employee_id") == employee_id]
+        if request_id:
+            results = [a for a in results if a.get("id") == request_id]
+        return results
 
 
 def create_hr_ticket(
@@ -227,44 +283,67 @@ def create_hr_ticket(
     assigned_to: Optional[str] = None
 ) -> Dict[str, Any]:
     """创建 HR 工单"""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO hr_tickets (id, employee_id, applicant, category, title, description, priority, status, assigned_to, external_system_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'open', %s, %s)
-                RETURNING id, category, title, priority, status, applicant, external_system_id;
-                """,
-                (ticket_id, employee_id, applicant, category, title, description, priority, assigned_to, external_system_id)
-            )
-            res = cur.fetchone()
-            conn.commit()
-            return dict(res)
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO hr_tickets (id, employee_id, applicant, category, title, description, priority, status, assigned_to, external_system_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'open', %s, %s)
+                    RETURNING id, category, title, priority, status, applicant, external_system_id;
+                    """,
+                    (ticket_id, employee_id, applicant, category, title, description, priority, assigned_to, external_system_id)
+                )
+                res = cur.fetchone()
+                conn.commit()
+                return dict(res)
+    except Exception:
+        item = {
+            "id": ticket_id,
+            "employee_id": employee_id,
+            "applicant": applicant,
+            "category": category,
+            "title": title,
+            "description": description,
+            "priority": priority,
+            "status": "open",
+            "assigned_to": assigned_to or "HR 服务专员",
+            "external_system_id": external_system_id,
+            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        _in_memory_tickets.append(item)
+        return item
 
 
 def query_hr_tickets(employee_id: str = DEFAULT_EMPLOYEE_ID, ticket_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """查询 HR 工单"""
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            if ticket_id:
-                cur.execute(
-                    """
-                    SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id
-                    FROM hr_tickets
-                    WHERE id = %s AND employee_id = %s;
-                    """,
-                    (ticket_id, employee_id)
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id
-                    FROM hr_tickets
-                    WHERE employee_id = %s
-                    ORDER BY created_at DESC;
-                    """,
-                    (employee_id,)
-                )
-            rows = cur.fetchall()
-            return [dict(r) for r in rows]
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                if ticket_id:
+                    cur.execute(
+                        """
+                        SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id
+                        FROM hr_tickets
+                        WHERE id = %s AND employee_id = %s;
+                        """,
+                        (ticket_id, employee_id)
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id
+                        FROM hr_tickets
+                        WHERE employee_id = %s
+                        ORDER BY created_at DESC;
+                        """,
+                        (employee_id,)
+                    )
+                rows = cur.fetchall()
+                return [dict(r) for r in rows]
+    except Exception:
+        results = [t for t in _in_memory_tickets if t.get("employee_id") == employee_id]
+        if ticket_id:
+            results = [t for t in results if t.get("id") == ticket_id]
+        return results
 

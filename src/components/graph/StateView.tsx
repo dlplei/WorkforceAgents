@@ -16,11 +16,19 @@ export default function StateView({
   config,
 }: Props) {
   const defaultMermaid = `graph TD;
-  __start__([START]):::first --> knowledge_retrieval;
+  __start__([START]):::first --> guardrail_check;
+  guardrail_check -->|合规放行| knowledge_retrieval;
+  guardrail_check -.->|快速短路| __end__;
   knowledge_retrieval --> reasoning;
-  reasoning -.-> __end__;
-  reasoning -.-> tool_execution;
-  tool_execution --> reasoning;`;
+  reasoning -.->|直接答复| __end__;
+  reasoning -.->|调用工具| tool_execution;
+  tool_execution -->|只读结果回流| reasoning;
+  tool_execution -.->|写操作门禁挂起| hitl_gate;
+  hitl_gate -.->|人工授权执行| tool_execution;
+  hitl_gate -.->|取消/放弃| __end__;
+  classDef first fill:#064e3b,stroke:#059669,stroke-width:2px,color:#a7f3d0;
+  classDef hitl fill:#451a03,stroke:#d97706,stroke-width:2px,color:#fde68a;
+  class hitl_gate hitl;`;
 
   return (
     <div className="space-y-3">
@@ -44,6 +52,11 @@ export default function StateView({
             <span className="text-purple-400">retrieved_docs:</span>{' '}
             <span className="text-slate-400">List[Dict[str, Any]]</span>
             <div className="text-[10px] text-slate-500 pl-2">RAG 混合检索召回的政策分片（标题、来源、相似度）</div>
+          </div>
+          <div>
+            <span className="text-purple-400">hitl_confirmed:</span>{' '}
+            <span className="text-slate-400">Optional[Dict[str, Any]]</span>
+            <div className="text-[10px] text-slate-500 pl-2">原生人机协同授权载荷（含批准动作、重写参数与凭据）</div>
           </div>
         </div>
       </div>

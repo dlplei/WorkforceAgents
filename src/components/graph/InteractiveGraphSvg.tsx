@@ -20,28 +20,34 @@ export default function InteractiveGraphSvg({
   large = false,
 }: Props) {
   const svgWidth = large ? 480 : 320;
-  const svgHeight = large ? 480 : 365;
+  const svgHeight = large ? 530 : 415;
   const scale = large ? 1.3 : 1;
 
   const nodePositions: Record<string, { x: number; y: number; w: number; h: number }> = {
     __start__: { x: (svgWidth / 2) - (46 * scale), y: 10 * scale, w: 92 * scale, h: 26 * scale },
-    guardrail_check: { x: (svgWidth / 2) - (78 * scale), y: 50 * scale, w: 156 * scale, h: 38 * scale },
-    knowledge_retrieval: { x: (svgWidth / 2) - (78 * scale), y: 112 * scale, w: 156 * scale, h: 40 * scale },
-    reasoning: { x: (svgWidth / 2) - (78 * scale), y: 176 * scale, w: 156 * scale, h: 44 * scale },
-    tool_execution: { x: (svgWidth / 2) - (78 * scale), y: 246 * scale, w: 156 * scale, h: 42 * scale },
-    __end__: { x: (svgWidth / 2) - (46 * scale), y: 318 * scale, w: 92 * scale, h: 26 * scale },
+    guardrail_check: { x: (svgWidth / 2) - (78 * scale), y: 48 * scale, w: 156 * scale, h: 36 * scale },
+    knowledge_retrieval: { x: (svgWidth / 2) - (78 * scale), y: 104 * scale, w: 156 * scale, h: 38 * scale },
+    reasoning: { x: (svgWidth / 2) - (78 * scale), y: 162 * scale, w: 156 * scale, h: 42 * scale },
+    tool_execution: { x: (svgWidth / 2) - (78 * scale), y: 226 * scale, w: 156 * scale, h: 40 * scale },
+    hitl_gate: { x: (svgWidth / 2) - (78 * scale), y: 290 * scale, w: 156 * scale, h: 40 * scale },
+    __end__: { x: (svgWidth / 2) - (46 * scale), y: 356 * scale, w: 92 * scale, h: 26 * scale },
   };
 
   const isNodeActive = (id: string) =>
     (activeNode === id ||
       (id === 'reasoning' && activeNode === 'response_generation') ||
-      (id === 'guardrail_check' && activeNode === 'guardrail_check')) &&
+      (id === 'guardrail_check' && activeNode === 'guardrail_check') ||
+      (id === 'hitl_gate' && (activeNode === 'hitl_gate' || activeNode === 'hitl_request'))) &&
     isRunning;
   const isNodeVisited = (id: string) => Boolean(nodeVisitCounts[id]);
 
   const isShortCircuitPathActive =
     isNodeActive('guardrail_check') ||
     (!isRunning && Boolean(nodeVisitCounts['guardrail_check']) && !nodeVisitCounts['knowledge_retrieval']);
+
+  const isHitlPathActive =
+    isNodeActive('hitl_gate') ||
+    Boolean(nodeVisitCounts['hitl_gate']);
 
   return (
     <svg
@@ -65,6 +71,9 @@ export default function InteractiveGraphSvg({
         </marker>
         <marker id="arrow-amber" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
           <polygon points="0 0, 7 3.5, 0 7" fill="#f59e0b" />
+        </marker>
+        <marker id="arrow-orange" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+          <polygon points="0 0, 7 3.5, 0 7" fill="#f97316" />
         </marker>
         <marker id="arrow-emerald" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
           <polygon points="0 0, 7 3.5, 0 7" fill="#34d399" />
@@ -156,12 +165,12 @@ export default function InteractiveGraphSvg({
       >
         [调用工具]
       </text>
-      {/* 6. tool_execution -> reasoning (循环回流) */}
+      {/* 6. tool_execution -> reasoning (只读结果回流) */}
       <path
-        d={`M ${nodePositions.tool_execution.x + nodePositions.tool_execution.w} ${nodePositions.tool_execution.y + 20 * scale}
-            C ${svgWidth - 14} ${nodePositions.tool_execution.y + 20 * scale},
-              ${svgWidth - 14} ${nodePositions.reasoning.y + 22 * scale},
-              ${nodePositions.reasoning.x + nodePositions.reasoning.w} ${nodePositions.reasoning.y + 22 * scale}`}
+        d={`M ${nodePositions.tool_execution.x + nodePositions.tool_execution.w} ${nodePositions.tool_execution.y + 18 * scale}
+            C ${svgWidth - 14} ${nodePositions.tool_execution.y + 18 * scale},
+              ${svgWidth - 14} ${nodePositions.reasoning.y + 20 * scale},
+              ${nodePositions.reasoning.x + nodePositions.reasoning.w} ${nodePositions.reasoning.y + 20 * scale}`}
         fill="none"
         stroke={isNodeActive('reasoning') && nodeVisitCounts['tool_execution'] ? '#f59e0b' : '#64748b'}
         strokeWidth={isNodeActive('reasoning') && nodeVisitCounts['tool_execution'] ? '2.5' : '1.5'}
@@ -170,19 +179,81 @@ export default function InteractiveGraphSvg({
       />
       <text
         x={svgWidth - 52 * scale}
-        y={nodePositions.reasoning.y + 44 * scale}
+        y={nodePositions.reasoning.y + 40 * scale}
         fill="#f59e0b"
-        fontSize={8.5 * scale}
+        fontSize={8 * scale}
       >
-        回流反馈
+        只读回流
       </text>
 
-      {/* 7. reasoning -> END */}
+      {/* 7. tool_execution -> hitl_gate (写操作门禁挂起卡片) */}
+      <line
+        x1={nodePositions.tool_execution.x + nodePositions.tool_execution.w / 2}
+        y1={nodePositions.tool_execution.y + nodePositions.tool_execution.h}
+        x2={nodePositions.hitl_gate.x + nodePositions.hitl_gate.w / 2}
+        y2={nodePositions.hitl_gate.y}
+        stroke={isHitlPathActive ? '#f97316' : '#475569'}
+        strokeWidth={isHitlPathActive ? '2.5' : '1.5'}
+        strokeDasharray="4 2"
+        markerEnd={isHitlPathActive ? 'url(#arrow-orange)' : 'url(#arrow-default)'}
+      />
+      <text
+        x={nodePositions.tool_execution.x + nodePositions.tool_execution.w / 2 + 6}
+        y={nodePositions.tool_execution.y + nodePositions.tool_execution.h + 16 * scale}
+        fill={isHitlPathActive ? '#fb923c' : '#94a3b8'}
+        fontSize={8 * scale}
+        fontWeight={isHitlPathActive ? 'bold' : 'normal'}
+      >
+        [写操作拦截]
+      </text>
+
+      {/* 8. hitl_gate -> tool_execution (人工授权执行回流) */}
       <path
-        d={`M ${nodePositions.reasoning.x} ${nodePositions.reasoning.y + 22 * scale}
-            C ${44 * scale} ${nodePositions.reasoning.y + 22 * scale},
-              ${44 * scale} ${nodePositions.__end__.y + 14 * scale},
-              ${nodePositions.__end__.x + 12 * scale} ${nodePositions.__end__.y + 14 * scale}`}
+        d={`M ${nodePositions.hitl_gate.x + nodePositions.hitl_gate.w} ${nodePositions.hitl_gate.y + 18 * scale}
+            C ${svgWidth - 26} ${nodePositions.hitl_gate.y + 18 * scale},
+              ${svgWidth - 26} ${nodePositions.tool_execution.y + 28 * scale},
+              ${nodePositions.tool_execution.x + nodePositions.tool_execution.w} ${nodePositions.tool_execution.y + 28 * scale}`}
+        fill="none"
+        stroke={isNodeActive('tool_execution') && nodeVisitCounts['hitl_gate'] ? '#10b981' : '#334155'}
+        strokeWidth="1.5"
+        strokeDasharray="2 2"
+        markerEnd="url(#arrow-emerald)"
+      />
+      <text
+        x={svgWidth - 44 * scale}
+        y={nodePositions.hitl_gate.y - 4 * scale}
+        fill="#34d399"
+        fontSize={7.5 * scale}
+      >
+        授权执行
+      </text>
+
+      {/* 9. hitl_gate -> END (卡片取消/撤销) */}
+      <line
+        x1={nodePositions.hitl_gate.x + nodePositions.hitl_gate.w / 2}
+        y1={nodePositions.hitl_gate.y + nodePositions.hitl_gate.h}
+        x2={nodePositions.__end__.x + nodePositions.__end__.w / 2}
+        y2={nodePositions.__end__.y}
+        stroke="#475569"
+        strokeWidth="1.2"
+        strokeDasharray="3 3"
+        markerEnd="url(#arrow-default)"
+      />
+      <text
+        x={nodePositions.hitl_gate.x + nodePositions.hitl_gate.w / 2 + 6}
+        y={nodePositions.hitl_gate.y + nodePositions.hitl_gate.h + 14 * scale}
+        fill="#64748b"
+        fontSize={7.5 * scale}
+      >
+        [取消/归档]
+      </text>
+
+      {/* 10. reasoning -> END */}
+      <path
+        d={`M ${nodePositions.reasoning.x} ${nodePositions.reasoning.y + 20 * scale}
+            C ${36 * scale} ${nodePositions.reasoning.y + 20 * scale},
+              ${36 * scale} ${nodePositions.__end__.y + 13 * scale},
+              ${nodePositions.__end__.x} ${nodePositions.__end__.y + 13 * scale}`}
         fill="none"
         stroke={isNodeActive('__end__') || (!isRunning && Boolean(nodeVisitCounts['reasoning'])) ? '#34d399' : '#475569'}
         strokeWidth={isNodeActive('__end__') ? '2.5' : '1.5'}
@@ -190,12 +261,12 @@ export default function InteractiveGraphSvg({
         markerEnd="url(#arrow-emerald)"
       />
       <text
-        x={48 * scale}
-        y={nodePositions.reasoning.y + 46 * scale}
+        x={40 * scale}
+        y={nodePositions.reasoning.y + 40 * scale}
         fill="#34d399"
         fontSize={8 * scale}
       >
-        [答复/结束]
+        [答复完成]
       </text>
       {/* START 节点 */}
       <g className="cursor-pointer" onClick={() => onSelectNode('__start__')}>
@@ -267,7 +338,7 @@ export default function InteractiveGraphSvg({
       <NodeBox
         pos={nodePositions.tool_execution}
         label="🔧 工具执行 (Tools)"
-        subLabel="9项运维自主/确认工具"
+        subLabel="自主业务与执行适配"
         isActive={isNodeActive('tool_execution')}
         isSelected={selectedNode === 'tool_execution'}
         isVisited={isNodeVisited('tool_execution')}
@@ -275,6 +346,20 @@ export default function InteractiveGraphSvg({
         activeColor="#f59e0b"
         scale={scale}
         onClick={() => onSelectNode('tool_execution')}
+      />
+
+      {/* 人机协同门禁 HITL */}
+      <NodeBox
+        pos={nodePositions.hitl_gate}
+        label="👤 人机协同 (HITL)"
+        subLabel="写操作卡片确认与授权"
+        isActive={isNodeActive('hitl_gate')}
+        isSelected={selectedNode === 'hitl_gate'}
+        isVisited={isNodeVisited('hitl_gate')}
+        count={nodeVisitCounts['hitl_gate']}
+        activeColor="#f97316"
+        scale={scale}
+        onClick={() => onSelectNode('hitl_gate')}
       />
 
       {/* END 节点 */}

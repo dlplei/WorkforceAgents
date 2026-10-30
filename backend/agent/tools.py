@@ -7,7 +7,7 @@ import json
 import os
 import logging
 from typing import Dict, Callable, Any, Optional, List
-from models import ToolResult
+from models import ToolResult, HitlActionRequest
 from services.hr_adapter import get_hr_adapter
 from db.database import get_current_employee
 from agent.knowledge import retrieve_knowledge
@@ -493,4 +493,137 @@ registry.register(
     permission_level="confirmation",
     handler=handle_create_hr_ticket,
 )
+
+
+# ============ HITL 辅助构建器 ============
+
+def build_hitl_action_request(
+    tool_name: str,
+    arguments: dict,
+    tool_call_id: Optional[str] = None
+) -> HitlActionRequest:
+    """为 confirmation 级写操作工具构建人机协同 (HITL) 结构化确认凭据"""
+    emp = get_current_employee()
+    ts = int(time.time() * 1000)
+    action_id = f"hitl_{tool_name}_{ts}"
+
+    emp_name = getattr(emp, "name", None) or (emp.get("name") if isinstance(emp, dict) else "张明")
+    emp_id = getattr(emp, "id", None) or (emp.get("id") if isinstance(emp, dict) else "E10293")
+    emp_dept = getattr(emp, "department", None) or (emp.get("department") if isinstance(emp, dict) else "研发部")
+    emp_mgr = getattr(emp, "manager", None) or (emp.get("manager") if isinstance(emp, dict) else "王经理")
+
+    if tool_name == "submit_leave_request":
+        leave_type_names = {
+            "annual": "年假 (带薪)",
+            "sick": "带薪病假",
+            "personal": "事假 (无薪)",
+            "marriage": "婚假",
+            "maternity": "产假",
+            "paternity": "陪产假",
+            "bereavement": "丧假",
+        }
+        lt = arguments.get("leave_type", "annual")
+        lt_label = leave_type_names.get(lt, lt)
+        start_date = arguments.get("start_date", "未指定")
+        end_date = arguments.get("end_date", "未指定")
+        reason = arguments.get("reason", "个人休假")
+
+        return HitlActionRequest(
+            action_id=action_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            title="请假申请审批核实 (Human-in-the-Loop)",
+            category="leave",
+            summary={
+                "申请员工": f"{emp_name} ({emp_id})",
+                "所属部门": emp_dept,
+                "假期类型": lt_label,
+                "请假周期": f"{start_date} 至 {end_date}",
+                "请假事由": reason,
+                "直属审批人": emp_mgr,
+                "生效机制": "提交后将写入 HR 数据库并流转审批",
+            },
+            raw_arguments=arguments,
+            status="pending",
+            risk_level="medium",
+            created_at=ts,
+        )
+
+    elif tool_name == "generate_document":
+        doc_type_names = {
+            "employment_proof": "在职证明",
+            "income_proof": "收入证明",
+            "internship_proof": "实习证明",
+            "leaving_proof": "离职证明",
+        }
+        dt = arguments.get("doc_type", "employment_proof")
+        dt_label = doc_type_names.get(dt, dt)
+        purpose = arguments.get("purpose", "办理业务")
+        lang = arguments.get("language", "zh")
+        lang_label = "中文版 (电子公章)" if lang == "zh" else "英文版 (电子公章)"
+
+        return HitlActionRequest(
+            action_id=action_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            title="HR 正式人事证明开具确认",
+            category="document",
+            summary={
+                "申请员工": f"{emp_name} ({emp_id})",
+                "证明类别": dt_label,
+                "开具用途": purpose,
+                "语言版本": lang_label,
+                "印章效力": "企业人事部电子公章 (具有法律效力)",
+            },
+            raw_arguments=arguments,
+            status="pending",
+            risk_level="low",
+            created_at=ts,
+        )
+
+    elif tool_name == "create_hr_ticket":
+        cat = arguments.get("category", "综合咨询")
+        title = arguments.get("title", "HR咨询")
+        priority = arguments.get("priority", "medium")
+        priority_labels = {"low": "普通", "medium": "中等", "high": "高优先", "urgent": "紧急 (2小时内响应)"}
+        desc = arguments.get("description", "")
+
+        return HitlActionRequest(
+            action_id=action_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            title="HR 运营服务工单提交确认",
+            category="ticket",
+            summary={
+                "申请员工": f"{emp_name} ({emp_id})",
+                "工单业务分类": cat,
+                "工单标题": title,
+                "紧急程度": priority_labels.get(priority, priority),
+                "诉求说明": desc,
+                "流转目标": "HR 共享服务中心 (SSC) / ServiceNow",
+            },
+            raw_arguments=arguments,
+            status="pending",
+            risk_level="medium",
+            created_at=ts,
+        )
+
+    # 兜底通用 HITL 动作
+    return HitlActionRequest(
+        action_id=action_id,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        title=f"高敏感操作授权确认: {tool_name}",
+        category="general",
+        summary={
+            "执行员工": f"{emp_name} ({emp_id})",
+            "工具名称": tool_name,
+            "参数载荷": json.dumps(arguments, ensure_ascii=False),
+        },
+        raw_arguments=arguments,
+        status="pending",
+        risk_level="medium",
+        created_at=ts,
+    )
+
 

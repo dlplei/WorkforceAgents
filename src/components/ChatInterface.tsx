@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap, RotateCcw, Database } from 'lucide-react';
-import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig } from '../types';
+import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig, HitlActionRequest } from '../types';
 import GraphInspector from './GraphInspector';
+import HitlApprovalCard from './HitlApprovalCard';
 
 interface Props {
   config: AppConfig;
@@ -42,6 +43,8 @@ export default function ChatInterface({
   const abortControllerRef = useRef<AbortController | null>(null);
   const toolCallsRef = useRef<ToolCallInfo[]>([]);
   const toolResultsRef = useRef<ToolResultInfo[]>([]);
+  const hitlRequestRef = useRef<HitlActionRequest | null>(null);
+  const [currentHitlRequest, setCurrentHitlRequest] = useState<HitlActionRequest | null>(null);
 
   // 监听外部注入快捷提示
   useEffect(() => {
@@ -84,8 +87,10 @@ export default function ChatInterface({
     setStreamingContent('');
     toolCallsRef.current = [];
     toolResultsRef.current = [];
+    hitlRequestRef.current = null;
     setCurrentToolCalls([]);
     setCurrentToolResults([]);
+    setCurrentHitlRequest(null);
     setTraceSteps([
       {
         id: `step-${Date.now()}-start`,
@@ -255,6 +260,24 @@ export default function ChatInterface({
       case 'token':
         setStreamingContent((prev) => prev + event.content);
         break;
+      case 'hitl_request': {
+        const hitlData = event.data;
+        hitlRequestRef.current = hitlData;
+        setCurrentHitlRequest(hitlData);
+        setActiveNode('hitl_gate');
+        setTraceSteps((prev) => [
+          ...prev,
+          {
+            id: `step-${Date.now()}-hitl-${hitlData.action_id}`,
+            node: 'hitl_gate',
+            timestamp: Date.now(),
+            status: 'completed',
+            summary: `🛡️ [HITL门禁挂起] 拦截写操作: ${hitlData.title}，已推送人机交互确认卡片`,
+            details: hitlData.summary,
+          },
+        ]);
+        break;
+      }
       case 'message_complete': {
         setTraceSteps((prev) => [
           ...prev.map((s) => (s.status === 'running' ? { ...s, status: 'completed' as const } : s)),
@@ -277,13 +300,16 @@ export default function ChatInterface({
             cached: event.cached,
             toolCalls: toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined,
             toolResults: toolResultsRef.current.length > 0 ? [...toolResultsRef.current] : undefined,
+            hitlRequest: hitlRequestRef.current ? { ...hitlRequestRef.current } : undefined,
           },
         ]);
         setStreamingContent('');
         setCurrentToolCalls([]);
         setCurrentToolResults([]);
+        setCurrentHitlRequest(null);
         toolCallsRef.current = [];
         toolResultsRef.current = [];
+        hitlRequestRef.current = null;
         break;
       }
       case 'error':
@@ -313,6 +339,114 @@ export default function ChatInterface({
       handleSubmit();
     }
   };
+  const handleHitlApprove = async (hitlReq: HitlActionRequest, messageId: string) => {
+    try {
+      const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
+      const response = await fetch(`${backendBase}/api/hitl/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action_id: hitlReq.action_id,
+          tool_name: hitlReq.tool_name,
+          decision: 'approve',
+          arguments: hitlReq.raw_arguments,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const res = await response.json();
+      if (res.success) {
+        const data = res.data || {};
+        const refId = data.request_id || data.ticket_id || data.doc_id || 'APR-2026';
+        const msg = data.message || `业务执行成功 (单号: ${refId})`;
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId && m.hitlRequest
+              ? {
+                  ...m,
+                  hitlRequest: {
+                    ...m.hitlRequest,
+                    status: 'approved',
+                    resultMessage: `✅ 执行成功！${msg}`,
+                    resultData: data,
+                  },
+                }
+              : m
+          )
+        );
+
+        setTraceSteps((prev) => [
+          ...prev,
+          {
+            id: `step-${Date.now()}-hitl-approved`,
+            node: 'hitl_gate',
+            timestamp: Date.now(),
+            status: 'completed',
+            summary: `🛡️ [HITL人工授权通过] 已正式执行: ${hitlReq.tool_name} (单号: ${refId})`,
+            details: data,
+          },
+        ]);
+        setToastMessage(`✅ 已成功提交并流转: ${hitlReq.title}`);
+      } else {
+        setToastMessage(`❌ 执行失败: ${res.error || '未知错误'}`);
+      }
+    } catch {
+      setToastMessage('连接后端执行授权失败');
+    }
+  };
+
+  const handleHitlReject = async (hitlReq: HitlActionRequest, messageId: string) => {
+    try {
+      const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
+      await fetch(`${backendBase}/api/hitl/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action_id: hitlReq.action_id,
+          tool_name: hitlReq.tool_name,
+          decision: 'reject',
+          arguments: hitlReq.raw_arguments,
+        }),
+      });
+    } catch {}
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId && m.hitlRequest
+          ? {
+              ...m,
+              hitlRequest: {
+                ...m.hitlRequest,
+                status: 'rejected',
+                resultMessage: '🚫 员工已撤销并作废此申请草稿，未写入系统。',
+              },
+            }
+          : m
+      )
+    );
+
+    setTraceSteps((prev) => [
+      ...prev,
+      {
+        id: `step-${Date.now()}-hitl-rejected`,
+        node: 'hitl_gate',
+        timestamp: Date.now(),
+        status: 'failed',
+        summary: `🛡️ [HITL人工取消] 员工主动放弃本次写操作: ${hitlReq.title}`,
+      },
+    ]);
+    setToastMessage('已取消该项操作');
+  };
+
+  const handleHitlEdit = (hitlReq: HitlActionRequest) => {
+    setInput(`我想对刚才的【${hitlReq.title}】做如下调整：`);
+    inputRef.current?.focus();
+  };
+
   const handleRegenerate = useCallback(
     async (assistantMessageId: string) => {
       if (isRunning) return;
@@ -465,6 +599,9 @@ export default function ChatInterface({
             message={msg}
             isRunning={isRunning}
             onRegenerate={handleRegenerate}
+            onHitlApprove={handleHitlApprove}
+            onHitlReject={handleHitlReject}
+            onHitlEdit={handleHitlEdit}
           />
         ))}
 
@@ -508,6 +645,19 @@ export default function ChatInterface({
             </div>
           </div>
         )}
+        {/* In-flight HITL Interception Card */}
+        {currentHitlRequest && (
+          <div className="max-w-2xl pl-10">
+            <HitlApprovalCard
+              request={currentHitlRequest}
+              onApprove={() => {}}
+              onReject={() => {}}
+              onEdit={handleHitlEdit}
+              disabled={true}
+            />
+          </div>
+        )}
+
 
         <div ref={messagesEndRef} />
       </div>
@@ -563,10 +713,16 @@ function MessageBubble({
   message,
   isRunning,
   onRegenerate,
+  onHitlApprove,
+  onHitlReject,
+  onHitlEdit,
 }: {
   message: ChatMessage;
   isRunning?: boolean;
   onRegenerate?: (id: string) => void;
+  onHitlApprove?: (req: HitlActionRequest, messageId: string) => void;
+  onHitlReject?: (req: HitlActionRequest, messageId: string) => void;
+  onHitlEdit?: (req: HitlActionRequest) => void;
 }) {
   const isUser = message.role === 'user';
   const formatted = isUser ? message.content : formatMessage(message.content);
@@ -627,6 +783,16 @@ function MessageBubble({
         ) : (
           <div className="text-sm text-slate-200 leading-relaxed" dangerouslySetInnerHTML={{ __html: formatted }} />
         )}
+        {!isUser && message.hitlRequest && (
+          <HitlApprovalCard
+            request={message.hitlRequest}
+            onApprove={(r) => onHitlApprove?.(r, message.id)}
+            onReject={(r) => onHitlReject?.(r, message.id)}
+            onEdit={onHitlEdit}
+            disabled={isRunning}
+          />
+        )}
+
         {!isUser && !isRunning && onRegenerate && (
           <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center justify-between text-xs text-slate-400">
             <span className="text-[10px] text-slate-500">

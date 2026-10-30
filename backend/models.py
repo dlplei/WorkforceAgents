@@ -65,6 +65,23 @@ class ToolResult(BaseModel):
     execution_time: float = 0.0
 
 
+# ============ HITL (Human-in-the-Loop) 相关 ============
+
+class HitlActionRequest(BaseModel):
+    """人机协同 (Human-in-the-Loop) 待确认动作请求"""
+    action_id: str
+    tool_name: str
+    tool_call_id: Optional[str] = None
+    title: str
+    category: Literal["leave", "document", "ticket", "travel", "general"] = "general"
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    raw_arguments: Dict[str, Any] = Field(default_factory=dict)
+    status: Literal["pending", "approved", "rejected"] = "pending"
+    risk_level: Literal["low", "medium", "high"] = "medium"
+    created_at: int
+
+
+
 # ============ Employee 相关 ============
 
 class LeaveBalance(BaseModel):

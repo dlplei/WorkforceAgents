@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
-HR_SEMANTIC_THRESHOLD = float(os.getenv("HR_SEMANTIC_THRESHOLD", "0.40"))
+HR_SEMANTIC_THRESHOLD = float(os.getenv("HR_SEMANTIC_THRESHOLD", "0.45"))
 
 # HR 业务核心领域语义锚点集（用于计算长尾偏离话题的语义空间余弦距离）
 HR_DOMAIN_ANCHORS = [
@@ -150,6 +150,8 @@ MATH_PATTERNS = [
 CHITCHAT_PATTERNS = [
     re.compile(r"(今天中午吃什么|推荐.*火锅|北京有什么好玩的|今天股市行情|讲个笑话|推荐一部电影|评价.*明星|王者荣耀|原神怎么玩)"),
     re.compile(r"(台湾问题|国际局势|美国大选|总统选举)"),
+    re.compile(r"(买|购|出售|推荐).{0,6}(航母|飞机|坦克|大炮|军舰|潜艇|导弹|军火|武器|二手车|房产|股票|基金)"),
+    re.compile(r"(在哪|去哪|怎么|如何).{0,4}(买|搞到|搞台|整台).{0,6}(航母|飞机|坦克|大炮|军舰|潜艇|导弹|军火)"),
 ]
 
 # 5. 纯问候语

@@ -311,11 +311,32 @@ _in_memory_approvals: List[Dict[str, Any]] = [
         "reason": "节后调休探亲，已协调交接前端代码合并",
         "approver": "李伟",
         "comment": None,
+        "action_date": None,
+    },
+    {
+        "id": "APR-002",
+        "approval_id": "APR-002",
+        "employee_id": "E10293",
+        "applicant": "张明",
+        "employee_name": "张明",
+        "type": "差旅报销",
+        "approval_type": "差旅报销",
+        "status": "approved",
+        "date": "2026-01-10",
+        "request_date": "2026-01-10",
+        "start_date": "2026-01-12",
+        "end_date": "2026-01-13",
+        "reason": "上海客户技术支持差旅",
+        "approver": "李伟",
+        "comment": "票据合规，准予报销",
+        "action_date": "2026-01-11",
     },
     {
         "id": "APR-101",
+        "approval_id": "APR-101",
         "employee_id": "E10293",
         "applicant": "张明",
+        "employee_name": "张明",
         "type": "年假",
         "approval_type": "年假",
         "status": "approved",
@@ -326,6 +347,25 @@ _in_memory_approvals: List[Dict[str, Any]] = [
         "reason": "节假日错峰探亲",
         "approver": "李伟",
         "comment": "同意，保持手机通畅",
+        "action_date": "2026-04-11",
+    },
+    {
+        "id": "APR-102",
+        "approval_id": "APR-102",
+        "employee_id": "E10293",
+        "applicant": "张明",
+        "employee_name": "张明",
+        "type": "在职证明开具",
+        "approval_type": "在职证明开具",
+        "status": "approved",
+        "date": "2026-05-01",
+        "request_date": "2026-05-01",
+        "start_date": "2026-05-01",
+        "end_date": "2026-05-01",
+        "reason": "出国签证办理使用",
+        "approver": "王芳",
+        "comment": "公章审核完毕，已签发电子件",
+        "action_date": "2026-05-02",
     },
 ]
 
@@ -392,37 +432,110 @@ def create_approval(
         return item
 
 
-def query_approvals(employee_id: str = DEFAULT_EMPLOYEE_ID, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """查询审批单"""
+def query_approvals(
+    employee_id: str = DEFAULT_EMPLOYEE_ID,
+    request_id: Optional[str] = None,
+    status: Optional[str] = None,
+    scope: Optional[str] = None,
+    applicant_name: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    approval_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """全维度审批单查询（支持单号、申请人、起止日期、审批状态、经办视角复合过滤）"""
+    cur_emp = get_employee(employee_id)
+    cur_name = cur_emp.name if cur_emp else ""
+    is_mgr = bool(cur_emp and (cur_emp.level.startswith("M") or "主管" in cur_emp.position or "总监" in cur_emp.position))
+    is_hr = bool(cur_emp and ("HR" in cur_emp.department or "HR" in cur_emp.position or cur_emp.name == "王芳"))
+
+    norm_status = None
+    if status and str(status).lower() not in ("all", "全部"):
+        sl = str(status).lower()
+        if sl in ("pending", "待审批", "待办"): norm_status = "pending"
+        elif sl in ("approved", "已批准", "通过", "已通过"): norm_status = "approved"
+        elif sl in ("rejected", "已驳回", "驳回", "拒绝"): norm_status = "rejected"
+        else: norm_status = status
+
+    eff_scope = scope or ("all" if is_hr else ("my_approvals" if (is_mgr and (norm_status or applicant_name)) else ("all" if is_mgr else "my_requests")))
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                where, params = [], []
                 if request_id:
-                    cur.execute(
-                        """
-                        SELECT id, approval_type AS type, status, applicant, request_date AS date, start_date, end_date, reason, approver
-                        FROM approvals
-                        WHERE id = %s AND employee_id = %s;
-                        """,
-                        (request_id, employee_id)
-                    )
+                    where.append("id = %s")
+                    params.append(request_id)
+                    if not (is_mgr or is_hr):
+                        where.append("(employee_id = %s OR approver = %s OR approver = %s)")
+                        params.extend([employee_id, cur_name, employee_id])
                 else:
-                    cur.execute(
-                        """
-                        SELECT id, approval_type AS type, status, applicant, request_date AS date, start_date, end_date, reason, approver
-                        FROM approvals
-                        WHERE employee_id = %s
-                        ORDER BY request_date DESC;
-                        """,
-                        (employee_id,)
-                    )
+                    if eff_scope == "my_requests":
+                        where.append("employee_id = %s"); params.append(employee_id)
+                    elif eff_scope == "my_approvals" and not is_hr:
+                        where.append("(approver = %s OR approver = %s)"); params.extend([cur_name, employee_id])
+                    elif eff_scope == "all" and not is_hr:
+                        if is_mgr:
+                            where.append("(employee_id = %s OR approver = %s OR approver = %s)")
+                            params.extend([employee_id, cur_name, employee_id])
+                        else:
+                            where.append("employee_id = %s"); params.append(employee_id)
+                    if norm_status:
+                        where.append("status = %s"); params.append(norm_status)
+                    if applicant_name:
+                        where.append("(applicant LIKE %s OR employee_id = %s)"); params.extend([f"%{applicant_name}%", applicant_name])
+                    if start_date:
+                        where.append("(request_date >= %s OR COALESCE(start_date, request_date) >= %s)"); params.extend([start_date, start_date])
+                    if end_date:
+                        where.append("(request_date <= %s OR COALESCE(end_date, request_date) <= %s)"); params.extend([end_date, end_date])
+                    if approval_type:
+                        where.append("approval_type LIKE %s"); params.append(f"%{approval_type}%")
+
+                where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+                sql = f"""
+                    SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, 
+                           status, applicant, applicant AS employee_name, request_date AS date, 
+                           request_date, start_date, end_date, reason, approver, comment, action_date
+                    FROM approvals
+                    {where_sql}
+                    ORDER BY request_date DESC, id DESC;
+                """
+                cur.execute(sql, tuple(params))
                 rows = cur.fetchall()
-                return sanitize_db_output([dict(r) for r in rows])
+                if rows is not None:
+                    return sanitize_db_output([dict(r) for r in rows])
     except Exception:
-        results = [a for a in _in_memory_approvals if a.get("employee_id") == employee_id]
-        if request_id:
-            results = [a for a in results if a.get("id") == request_id]
+        pass
+
+    results = list(_in_memory_approvals)
+    if request_id:
+        results = [a for a in results if a.get("id") == request_id or a.get("approval_id") == request_id]
+        if not (is_mgr or is_hr):
+            results = [a for a in results if a.get("employee_id") == employee_id or a.get("approver") in (cur_name, employee_id)]
         return sanitize_db_output(results)
+
+    if eff_scope == "my_requests":
+        results = [a for a in results if a.get("employee_id") == employee_id]
+    elif eff_scope == "my_approvals" and not is_hr:
+        results = [a for a in results if a.get("approver") in (cur_name, employee_id)]
+    elif eff_scope == "all" and not is_hr:
+        if is_mgr:
+            results = [a for a in results if a.get("employee_id") == employee_id or a.get("approver") in (cur_name, employee_id)]
+        else:
+            results = [a for a in results if a.get("employee_id") == employee_id]
+
+    if norm_status:
+        results = [a for a in results if a.get("status") == norm_status]
+    if applicant_name:
+        results = [a for a in results if applicant_name in str(a.get("applicant", "")) or applicant_name == a.get("employee_id")]
+    if start_date:
+        results = [a for a in results if str(a.get("request_date") or a.get("start_date") or "") >= start_date]
+    if end_date:
+        results = [a for a in results if str(a.get("request_date") or a.get("end_date") or "") <= end_date]
+    if approval_type:
+        results = [a for a in results if approval_type in str(a.get("approval_type") or a.get("type") or "")]
+
+    results.sort(key=lambda x: str(x.get("request_date") or ""), reverse=True)
+    return sanitize_db_output(results)
 
 
 def deduct_leave_balance(employee_id: str, leave_type: str = "annual", days: float = 1.0) -> Dict[str, Any]:
@@ -537,19 +650,34 @@ def update_approval_status(
             target_idx = idx
             break
 
+    action_today = datetime.now().strftime("%Y-%m-%d")
+    final_comment = comment or ("审批通过" if norm_decision == "approved" else "审批驳回")
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE approvals
-                    SET status = %s, approver = %s
-                    WHERE id = %s
-                    RETURNING id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver;
-                    """,
-                    (norm_decision, manager_name, approval_id)
-                )
-                row = cur.fetchone()
+                try:
+                    cur.execute(
+                        """
+                        UPDATE approvals
+                        SET status = %s, approver = %s, comment = %s, action_date = %s
+                        WHERE id = %s
+                        RETURNING id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver, comment, action_date;
+                        """,
+                        (norm_decision, manager_name, final_comment, action_today, approval_id)
+                    )
+                    row = cur.fetchone()
+                except Exception:
+                    conn.rollback()
+                    cur.execute(
+                        """
+                        UPDATE approvals
+                        SET status = %s, approver = %s
+                        WHERE id = %s
+                        RETURNING id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver;
+                        """,
+                        (norm_decision, manager_name, approval_id)
+                    )
+                    row = cur.fetchone()
                 if row:
                     target = sanitize_db_output(dict(row))
                     conn.commit()
@@ -570,14 +698,15 @@ def update_approval_status(
             "end_date": "2026-06-02",
             "reason": "年假调休",
             "approver": manager_name,
-            "comment": comment or ("审批通过" if norm_decision == "approved" else "审批驳回"),
+            "comment": final_comment,
+            "action_date": action_today,
         }
         _in_memory_approvals.append(target)
     else:
         target["status"] = norm_decision
         target["approver"] = manager_name
-        target["comment"] = comment or ("审批通过" if norm_decision == "approved" else "审批驳回")
-        # 同步写入内存 fallback 列表，防止后续因数据为空 fallback 时状态回滚
+        target["comment"] = final_comment
+        target["action_date"] = action_today
         if target_idx >= 0:
             _in_memory_approvals[target_idx] = dict(target)
         else:

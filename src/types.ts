@@ -141,6 +141,7 @@ export interface ApprovalItem {
   reason?: string;
   approver?: string;
   comment?: string;
+  action_date?: string;
   days?: number;
   details?: {
     leave_type?: string;

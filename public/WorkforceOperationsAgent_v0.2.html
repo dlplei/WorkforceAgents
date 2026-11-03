@@ -1114,6 +1114,25 @@
             </div>
           </div>
 
+          <div class="grid" style="margin: 16px 0;">
+            <div class="card" style="border-color:#06b6d4; background:#f8fafc;">
+              <h4 style="color:#0891b2;">🔍 5.5 全维度智能审批查询（免单号依赖 + 多维复合过滤）</h4>
+              <ul>
+                <li><strong>杜绝机械索要单号</strong>：破除传统硬编码依赖 ticket ID 的交互瓶颈，对齐 ServiceNow / Workday / 飞书审批业界最佳实践；</li>
+                <li><strong>相对时间与意图智能推断</strong>：工具层内置快捷相对时间解析（本月/近7天/上月/今年），用户提问“查我近期的请假”、“张明的调休批了吗”可免单号直接调度；</li>
+                <li><strong>系统级 Prompt 原生约束</strong>：工作原则新增第 9 条，绝对严禁在用户询问审批时机械索要单号，要求 Agent 结合上下文动态拼装申请人与时间范围。</li>
+              </ul>
+            </div>
+            <div class="card" style="border-color:#6366f1; background:#f8fafc;">
+              <h4 style="color:#4f46e5;">📑 5.6 审批中心双 Tab 升级与跨角色 RBAC 修复 (Approval Hub)</h4>
+              <ul>
+                <li><strong>修复主管查单报空 Bug</strong>：解耦单据与申请人硬绑定，放行申请人、经办审批人、直属主管及 HRBP 四维合法通道，彻底解决李总查 APR-001 报空痛点；</li>
+                <li><strong>双 Tab 待办与归档历史</strong>：集成「待我审批」与「审批历史」工作台，提供近 7 天 / 近 30 天时间胶囊与审批人意见留痕；</li>
+                <li><strong>单号一键复制徽章</strong>：待办与历史单据卡片均挂载单号复制按键，一键提取入剪贴板，支持跨系统粘贴与自然语言快速检索。</li>
+              </ul>
+            </div>
+          </div>
+
           <div style="margin: 20px 0; padding: 18px; border-radius: 18px; background: #0f172a; border: 1px solid #334155;">
             <h4 style="color:#38bdf8; margin-top:0;">📡 主管审批全生命周期与跨组件事件流转拓扑</h4>
             <pre style="background:transparent; padding:0; margin:0; font-size:12px; color:#e2e8f0; line-height:1.6;"><code>[Persona 切换: 李伟(主管)] ──► 顶部识别身份 ──► GET /api/approvals/pending ──► 待办徽标点亮 (Badge: N)

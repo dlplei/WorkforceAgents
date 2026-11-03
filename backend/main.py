@@ -155,6 +155,58 @@ async def list_employees():
     return get_all_employees()
 
 
+@app.get("/api/approvals")
+async def list_approvals(
+    request_id: Optional[str] = None,
+    status: Optional[str] = None,
+    scope: Optional[str] = None,
+    applicant_name: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    approval_type: Optional[str] = None,
+):
+    """多维查询审批单（支持单号、申请人、起止日期、状态与权限视角筛选）"""
+    emp = get_current_employee()
+    adapter = get_hr_adapter()
+    return adapter.get_approvals(
+        employee_id=emp.id,
+        request_id=request_id,
+        status=status,
+        scope=scope,
+        applicant_name=applicant_name,
+        start_date=start_date,
+        end_date=end_date,
+        approval_type=approval_type,
+    )
+
+
+@app.get("/api/approvals/history")
+async def get_approval_history(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    applicant_name: Optional[str] = None,
+    approval_type: Optional[str] = None,
+):
+    """获取审批归档历史流水（已批准/已驳回，供前端审批中心历史 Tab 查看）"""
+    emp = get_current_employee()
+    adapter = get_hr_adapter()
+    is_mgr = bool(emp.level.startswith("M") or "主管" in emp.position or "总监" in emp.position)
+    is_hr = bool("HR" in emp.department or "HR" in emp.position or emp.name == "王芳")
+    
+    # 获取非 pending 状态的记录
+    items = adapter.get_approvals(
+        employee_id=emp.id,
+        status=None,
+        scope="my_approvals" if (is_mgr and not is_hr) else ("all" if is_hr else "my_requests"),
+        applicant_name=applicant_name,
+        start_date=start_date,
+        end_date=end_date,
+        approval_type=approval_type,
+    )
+    # 过滤出终态历史
+    return [i for i in items if i.get("status") in ("approved", "rejected", "已批准", "已驳回")]
+
+
 @app.get("/api/approvals/pending")
 async def get_pending_approvals():
     """获取当前登录主管/HRBP 名下待审批的单据列表"""

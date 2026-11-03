@@ -122,8 +122,27 @@ class LocalPostgresAdapter(IHRServiceAdapter):
             approver=approver
         )
 
-    def get_approvals(self, employee_id: str, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        return database.query_approvals(employee_id, request_id)
+    def get_approvals(
+        self,
+        employee_id: str,
+        request_id: Optional[str] = None,
+        status: Optional[str] = None,
+        scope: Optional[str] = None,
+        applicant_name: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        approval_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        return database.query_approvals(
+            employee_id=employee_id,
+            request_id=request_id,
+            status=status,
+            scope=scope,
+            applicant_name=applicant_name,
+            start_date=start_date,
+            end_date=end_date,
+            approval_type=approval_type,
+        )
     def get_pending_approvals(self, approver_name_or_id: str) -> List[Dict[str, Any]]:
         return database.query_pending_approvals_for_manager(approver_name_or_id)
 

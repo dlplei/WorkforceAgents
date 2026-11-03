@@ -334,17 +334,76 @@ async def handle_query_approval_status(params: dict) -> dict:
     adapter = get_hr_adapter()
     emp = get_current_employee()
     request_id = params.get("request_id")
-    approvals = adapter.get_approvals(emp["id"], request_id)
-    return {"success": True, "data": {"approvals": approvals}}
+    status = params.get("status")
+    applicant_name = params.get("applicant_name")
+    approval_type = params.get("approval_type")
+    scope = params.get("scope")
+    start_date = params.get("start_date")
+    end_date = params.get("end_date")
+    time_range = params.get("time_range")
+
+    # 快捷相对时间推断（基于企业当前系统日期）
+    from datetime import datetime as dt, timedelta
+    now = dt.now()
+    if time_range:
+        tr = str(time_range).lower()
+        if "7" in tr or "week" in tr or "周" in tr:
+            start_date = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+            end_date = now.strftime("%Y-%m-%d")
+        elif "30" in tr or "month" in tr or "月" in tr:
+            if "last" in tr or "上" in tr:
+                first_this_month = dt(now.year, now.month, 1)
+                last_month_end = first_this_month - timedelta(days=1)
+                start_date = dt(last_month_end.year, last_month_end.month, 1).strftime("%Y-%m-%d")
+                end_date = last_month_end.strftime("%Y-%m-%d")
+            else:
+                start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+                end_date = now.strftime("%Y-%m-%d")
+        elif "year" in tr or "年" in tr:
+            start_date = f"{now.year}-01-01"
+            end_date = f"{now.year}-12-31"
+
+    approvals = adapter.get_approvals(
+        employee_id=emp["id"],
+        request_id=request_id,
+        status=status,
+        scope=scope,
+        applicant_name=applicant_name,
+        start_date=start_date,
+        end_date=end_date,
+        approval_type=approval_type,
+    )
+    return {
+        "success": True, 
+        "data": {
+            "approvals": approvals,
+            "total": len(approvals),
+            "filters": {
+                "request_id": request_id,
+                "status": status,
+                "applicant_name": applicant_name,
+                "start_date": start_date,
+                "end_date": end_date,
+                "scope": scope,
+            }
+        }
+    }
 
 
 registry.register(
     name="query_approval_status",
-    description="查询审批流程状态。",
+    description="多维查询审批流程状态与历史记录。支持按单号、审批状态、时间区间、申请人姓名或单据类型灵活查询。用户即使没有提供具体单号，也可直接调用此工具查询近期的审批或名下待办，严禁向用户生硬索要单号！",
     parameters={
         "type": "object",
         "properties": {
-            "request_id": {"type": "string", "description": "申请单号"},
+            "request_id": {"type": "string", "description": "申请单号（可选，如 APR-001）"},
+            "status": {"type": "string", "description": "审批状态筛选：pending(待审批), approved(已通过), rejected(已驳回), all(全部)"},
+            "applicant_name": {"type": "string", "description": "申请人姓名（如主管查询指定员工‘张明’的申请，可选）"},
+            "approval_type": {"type": "string", "description": "单据类型关键字，如'年假'、'差旅'、'证明'等（可选）"},
+            "time_range": {"type": "string", "description": "快捷时间区间：'last_7_days'(近7天), 'this_month'(本月), 'last_month'(上月), 'this_year'(今年)"},
+            "start_date": {"type": "string", "description": "起始日期，格式 YYYY-MM-DD（可选）"},
+            "end_date": {"type": "string", "description": "截止日期，格式 YYYY-MM-DD（可选）"},
+            "scope": {"type": "string", "description": "查询视角：'my_requests'(我提交的), 'my_approvals'(我经办审批的), 'all'(全部)"},
         },
         "required": [],
     },

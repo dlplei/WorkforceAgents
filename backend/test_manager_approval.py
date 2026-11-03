@@ -80,5 +80,74 @@ class TestManagerApproval(unittest.TestCase):
         self.assertLess(emp_after.leave_balance.annual, annual_before)
         print(f"\n[Test Pass] 审批通过前后年假扣减: {annual_before} 天 -> {emp_after.leave_balance.annual} 天")
 
+    def test_manager_cross_role_lookup_apr001(self):
+        """测试主管李伟直接通过单号 APR-001 跨角色查询下属单据（彻底解决历史报空 Bug）"""
+        res = self.client.get(
+            "/api/approvals?request_id=APR-001",
+            headers={"X-Employee-Id": "E10001"}
+        )
+        self.assertEqual(res.status_code, 200)
+        items = res.json()
+        self.assertTrue(len(items) >= 1)
+        self.assertEqual(items[0]["id"], "APR-001")
+        self.assertEqual(items[0]["applicant"], "张明")
+        self.assertEqual(items[0]["approver"], "李伟")
+
+    def test_query_approvals_multi_dimensions(self):
+        """测试多维条件组合检索（免单号、按申请人、按状态与起止日期复合查询）"""
+        # 1. 主管按申请人姓名免单号查询
+        res_by_name = self.client.get(
+            "/api/approvals?applicant_name=张明",
+            headers={"X-Employee-Id": "E10001"}
+        )
+        self.assertEqual(res_by_name.status_code, 200)
+        items = res_by_name.json()
+        self.assertGreaterEqual(len(items), 1)
+        for item in items:
+            self.assertEqual(item["applicant"], "张明")
+
+        # 2. 按日期区间过滤
+        res_by_date = self.client.get(
+            "/api/approvals?start_date=2026-01-01&end_date=2026-05-31",
+            headers={"X-Employee-Id": "E10001"}
+        )
+        self.assertEqual(res_by_date.status_code, 200)
+        items_date = res_by_date.json()
+        self.assertIsInstance(items_date, list)
+        self.assertGreaterEqual(len(items_date), 1)
+
+    def test_approval_history_endpoint(self):
+        """测试审批中心历史流水归档接口 (/api/approvals/history)"""
+        res = self.client.get(
+            "/api/approvals/history",
+            headers={"X-Employee-Id": "E10001"}
+        )
+        self.assertEqual(res.status_code, 200)
+        history = res.json()
+        self.assertIsInstance(history, list)
+        self.assertGreaterEqual(len(history), 1)
+        # 校验所有历史记录均为终态
+        for h in history:
+            self.assertIn(h.get("status"), ("approved", "rejected", "已批准", "已驳回"))
+            self.assertIsNotNone(h.get("comment"))
+
+    def test_agent_tool_query_approval_status_without_id(self):
+        """测试 Agent 工具层 handle_query_approval_status 在无单号输入时的智能推断检索"""
+        import asyncio
+        from agent.tools import handle_query_approval_status
+
+        # 模拟李伟主管无单号查询“本月”审批
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            res = loop.run_until_complete(
+                handle_query_approval_status({"time_range": "this_month", "status": "all"})
+            )
+            self.assertTrue(res["success"])
+            self.assertIn("approvals", res["data"])
+            self.assertIn("total", res["data"])
+        finally:
+            loop.close()
+
 if __name__ == "__main__":
     unittest.main()

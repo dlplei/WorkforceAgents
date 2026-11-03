@@ -19,6 +19,8 @@ from agent.tools import registry
 from db.database import get_current_employee, get_current_employee_id, set_current_employee_id, get_all_employees, init_db
 from models import ApprovalActionRequest, ApprovalActionResponse
 from services.hr_adapter import get_hr_adapter
+from services.metrics_service import record_hitl_action
+from prometheus_fastapi_instrumentator import Instrumentator
 from services.cache_service import (
     init_cache,
     get_cached_response,
@@ -84,6 +86,18 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# 初始化 Prometheus 可观测性 Instrumentator 并暴露 /metrics 端点
+instrumentator = Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    should_respect_env_var=False,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=["/metrics", "/docs", "/openapi.json", "/health", "/"],
+    inprogress_name="workforce_requests_inprogress",
+    inprogress_labels=True,
+)
+instrumentator.instrument(app).expose(app, endpoint="/metrics", include_in_schema=True)
 
 # CORS 配置（允许前端访问）
 app.add_middleware(
@@ -610,6 +624,7 @@ async def handle_hitl_action(req: HitlDecisionRequest):
     logger.info(f"🛡️ [HITL Action] 收到卡片决策: {req.decision} | 工具: {req.tool_name} | ID: {req.action_id}")
 
     if req.decision == "reject":
+        record_hitl_action("rejected", req.tool_name)
         return {
             "success": True,
             "status": "rejected",
@@ -620,6 +635,7 @@ async def handle_hitl_action(req: HitlDecisionRequest):
     # 执行确认写操作
     tool = registry.get(req.tool_name)
     if not tool:
+        record_hitl_action("failed", req.tool_name)
         raise HTTPException(status_code=404, detail=f"未找到对应业务工具: {req.tool_name}")
 
     start_t = asyncio.get_event_loop().time()
@@ -627,6 +643,7 @@ async def handle_hitl_action(req: HitlDecisionRequest):
     duration = asyncio.get_event_loop().time() - start_t
 
     if result.success:
+        record_hitl_action("approved", req.tool_name)
         evicted = invalidate_cache_on_write(req.tool_name)
         if evicted > 0:
             logger.info(f"🧹 [HITL Action] 写操作 '{req.tool_name}' 成功执行，已淘汰 {evicted} 条缓存")
@@ -639,6 +656,7 @@ async def handle_hitl_action(req: HitlDecisionRequest):
             "execution_time": round(duration, 3),
         }
     else:
+        record_hitl_action("failed", req.tool_name)
         logger.error(f"❌ [HITL Action] 写操作 '{req.tool_name}' 执行失败: {result.error}")
         return {
             "success": False,

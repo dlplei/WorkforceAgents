@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'Workforce Dashboards'
+    orgId: 1
+    folder: 'Workforce Operations'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

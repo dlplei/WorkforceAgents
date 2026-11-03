@@ -146,7 +146,7 @@
           <li><a href="#roadmap">实施路线图</a></li>
           <li><a href="#team">团队配置</a></li>
           <li><a href="#risks">风险分析</a></li>
-          <li><a href="#metrics">衡量指标</a></li>
+          <li><a href="#observability">生产级可观测性与监控指标 (Prometheus + Grafana)</a></li>
           <li><a href="#priorities">优先建设建议</a></li>
           <li><a href="#summary">方案总结</a></li>
         </ol>
@@ -1242,42 +1242,133 @@
           </table>
         </section>
 
-        <!-- 十五、衡量指标 -->
-        <section id="metrics">
-          <h2>十五、衡量指标</h2>
+        <!-- 十五、生产级全链路可观测性与监控指标 -->
+        <section id="observability">
+          <h2>十五、生产级全链路可观测性与监控指标 (Prometheus + Grafana)</h2>
+          <p class="lead">为保障高并发与企业严苛 SLA 要求，系统建立了一套覆盖「业务成效、大模型成本、缓存生命周期、输入护栏安全、人机协同门禁」的生产级全链路可观测性体系。</p>
+
+          <h3>1. 业务成效衡量指标 (Business KPIs)</h3>
           <div class="grid-3">
             <div class="card">
               <h3>🧑‍💼 员工体验指标</h3>
               <ul>
-                <li>首次响应时间</li>
-                <li>任务完成时间</li>
-                <li>员工满意度 (CSAT)</li>
-                <li>自助解决率</li>
-                <li>多轮对话完成率</li>
+                <li><strong>首次响应时间 (TTFT)</strong>：流式切片输出 &lt; 800ms</li>
+                <li><strong>任务平均完成时间</strong>：休假申请/证明开具 &lt; 30s</li>
+                <li><strong>员工满意度 (CSAT)</strong>：目标评分 &gt; 4.6 / 5.0</li>
+                <li><strong>自助解决率</strong>：常规政策与办事咨询 &gt; 85%</li>
+                <li><strong>多轮对话完成率</strong>：复杂条件场景 &gt; 92%</li>
               </ul>
             </div>
             <div class="card">
               <h3>⚡ 运营效率指标</h3>
               <ul>
-                <li>HR 工单减少比例</li>
-                <li>人均服务成本降低</li>
-                <li>自动化流程提交比例</li>
-                <li>审批材料一次通过率</li>
-                <li>HR 专员处理时长降低</li>
+                <li><strong>HR 工单减少比例</strong>：重复性工单分流率 &gt; 40%</li>
+                <li><strong>人均服务成本降低</strong>：单次咨询成本降至 &lt; ¥0.15</li>
+                <li><strong>自动化流程提交比例</strong>：请假与报销预审 100% 结构化</li>
+                <li><strong>审批材料一次通过率</strong>：杜绝漏填、错填，通过率 &gt; 95%</li>
+                <li><strong>HR 专员处理时长降低</strong>：审批流提速 &gt; 60%</li>
               </ul>
             </div>
             <div class="card">
               <h3>🛡️ 质量与安全指标</h3>
               <ul>
-                <li>政策回答准确率</li>
-                <li>工具调用成功率</li>
-                <li>越权访问拦截率</li>
-                <li>人工介入率</li>
-                <li>审计覆盖率</li>
-                <li>幻觉率 / 无依据回答率</li>
+                <li><strong>政策回答准确率 (RAG Grounding)</strong>：&gt; 98%</li>
+                <li><strong>工具调用成功率 (Tool Success)</strong>：&gt; 99%</li>
+                <li><strong>提示词注入与越权拦截率</strong>：100% 毫秒级阻断</li>
+                <li><strong>HITL 人机协同合规率</strong>：写操作 100% 二次显式授权</li>
+                <li><strong>单向终态审计覆盖率</strong>：审批与办结 100% 不可篡改留痕</li>
               </ul>
             </div>
           </div>
+
+          <div class="section-divider"></div>
+
+          <h3>2. Prometheus 原生监控指标规范 (Metrics Schema)</h3>
+          <p>后端引入 <code>prometheus-fastapi-instrumentator</code> 与 <code>prometheus-client</code>，统一在 <code>workforce_*</code> 业务命名空间与 <code>http_*</code> API 命名空间暴露标准化指标，挂载于 <code>/metrics</code> 端点：</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>指标标识符 (Metric Name)</th>
+                <th>类型</th>
+                <th>维度标签 (Labels)</th>
+                <th>生产监控用途与预警阈值</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>workforce_llm_tokens_total</code></td>
+                <td>Counter</td>
+                <td><code>direction</code> (input/output), <code>model</code>, <code>purpose</code></td>
+                <td>统计各模型输入/输出 Token 绝对消耗量，核算日均 API 运营成本</td>
+              </tr>
+              <tr>
+                <td><code>workforce_llm_calls_total</code></td>
+                <td>Counter</td>
+                <td><code>model</code>, <code>purpose</code></td>
+                <td>大模型推理服务调用频次与并发峰值，突增时触发限流与降级告警</td>
+              </tr>
+              <tr>
+                <td><code>workforce_llm_duration_seconds</code></td>
+                <td>Histogram</td>
+                <td><code>model</code>, <code>purpose</code></td>
+                <td>端到端推理生成时延，P90 &gt; 4.0s 触发模型服务降级熔断</td>
+              </tr>
+              <tr>
+                <td><code>workforce_redis_cache_events_total</code></td>
+                <td>Counter</td>
+                <td><code>event</code> (hit/miss/set/invalidate), <code>cache_type</code></td>
+                <td>Redis 问答与短期记忆缓存命中率 (Hit Rate)，衡量免模型调用省钱比例</td>
+              </tr>
+              <tr>
+                <td><code>workforce_guardrail_blocks_total</code></td>
+                <td>Counter</td>
+                <td><code>reason</code> (injection/domain_shift/abuse), <code>check_type</code></td>
+                <td>提示词注入、越权刺探与业务偏离短路拦截频次，短时暴增提示安全攻击</td>
+              </tr>
+              <tr>
+                <td><code>workforce_guardrail_duration_seconds</code></td>
+                <td>Histogram</td>
+                <td><code>check_type</code> (l1_regex/l2_embedding/all)</td>
+                <td>前置护栏审查耗时，P99 稳定控制在 &lt; 50ms（L1 正则微秒级快速短路）</td>
+              </tr>
+              <tr>
+                <td><code>workforce_hitl_events_total</code></td>
+                <td>Counter</td>
+                <td><code>event</code> (triggered/approved/rejected/failed), <code>tool_name</code></td>
+                <td>人机协同门禁触发率与员工授权意愿，分析驳回高发工具并优化交互</td>
+              </tr>
+              <tr>
+                <td><code>workforce_graph_node_duration_seconds</code></td>
+                <td>Histogram</td>
+                <td><code>node</code> (knowledge_retrieval/reasoning/tool_execution)</td>
+                <td>LangGraph 各状态节点耗时分布，快速定位向量检索或工具调用瓶颈</td>
+              </tr>
+              <tr>
+                <td><code>http_request_duration_seconds</code></td>
+                <td>Histogram</td>
+                <td><code>handler</code>, <code>status</code>, <code>method</code></td>
+                <td>FastAPI 接口全局耗时分位（P50/P90/P99），提供核心接口 SLA 守护</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>3. 监控基础设施与 Grafana 即插即用编排</h3>
+          <div class="note">
+            <strong>零外部改动与镜像复用方案：</strong>直接复用宿主机已有的 Prometheus (v3.1.0) 与 Grafana (11.5.1) 镜像，配置专属非冲突端口（Prometheus: <code>9091</code>，Grafana: <code>3002</code>），通过 <code>monitoring/grafana/dashboards/workforce-ops.json</code> 实现开箱即用自动挂载。
+          </div>
+
+          <pre><code># 启动持久化监控容器服务 (后台运行)
+podman compose up -d prometheus grafana
+
+# 访问地址：
+# - Prometheus 控制台： http://localhost:9091
+# - Grafana 实时看板：  http://localhost:3002  (账号/密码: admin / admin)
+# - 后端指标原生端点：  http://localhost:8000/metrics
+
+# 自动化测试闭环验证：
+python backend/test_observability.py
+# -> 🎉 All Observability Tests Passed Successfully!</code></pre>
         </section>
 
         <!-- 十六、优先建设建议 -->

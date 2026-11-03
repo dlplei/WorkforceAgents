@@ -1,0 +1,124 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "type": "stat",
+      "title": "Total LLM Tokens",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum(workforce_llm_tokens_total)", "legendFormat": "Tokens" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "type": "stat",
+      "title": "Redis Cache Hits / Total",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum(workforce_redis_cache_events_total{event=\"hit\"}) or vector(0)", "legendFormat": "Hits" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "type": "stat",
+      "title": "Guardrails Blocks",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum(workforce_guardrail_blocks_total) or vector(0)", "legendFormat": "Blocks" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "type": "stat",
+      "title": "HITL Approvals",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum(workforce_hitl_events_total{event=\"approved\"}) or vector(0)", "legendFormat": "Approved" }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "type": "timeseries",
+      "title": "LLM Token Throughput (Tokens / sec)",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum by (direction) (rate(workforce_llm_tokens_total[1m]))", "legendFormat": "{{direction}}" }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "type": "timeseries",
+      "title": "Redis Cache Lifecycle Events Rate",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum by (event) (rate(workforce_redis_cache_events_total[1m]))", "legendFormat": "{{event}}" }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "type": "timeseries",
+      "title": "Guardrail Interceptions by Reason",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "sum by (reason) (increase(workforce_guardrail_blocks_total[5m]))", "legendFormat": "{{reason}}" }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "type": "timeseries",
+      "title": "FastAPI HTTP Request Latency (p90)",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "histogram_quantile(0.90, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))", "legendFormat": "p90 latency" }
+      ],
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["workforce", "agent", "llm", "production"],
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m"] },
+  "timezone": "browser",
+  "title": "Workforce Operations Agent - Observability Dashboard",
+  "uid": "workforce-ops-agent"
+}

@@ -49,16 +49,19 @@
 ```
 .
 ├── backend/                     # Python 后端
-│   ├── main.py                 # FastAPI 入口
+│   ├── main.py                 # FastAPI 入口 (含 /metrics 端点与中间件)
 │   ├── config.py               # 配置管理与环境变量
 │   ├── models.py               # Pydantic 数据模型
-│   ├── requirements.txt        # Python 依赖（含 LangGraph, LangChain）
+│   ├── requirements.txt        # Python 依赖（含 LangGraph, Prometheus Instrumentator）
 │   ├── test_agent_regression.py # Agent 与 LangGraph 端到端回归测试
+│   ├── test_observability.py   # 可观测性与 Prometheus 指标自动化测试
 │   ├── db/                     # PostgreSQL 数据持久层
 │   │   ├── database.py         # 数据库连接与 CRUD 操作
 │   │   └── init.sql            # 数据库表结构与初始化数据
-│   ├── services/               # 外部服务适配器
-│   │   └── hr_adapter.py       # IHRServiceAdapter (PostgreSQL / ServiceNow)
+│   ├── services/               # 外部服务适配器与业务基础设施
+│   │   ├── hr_adapter.py       # IHRServiceAdapter (PostgreSQL / ServiceNow)
+│   │   ├── cache_service.py    # Redis 智能缓存与生命周期管理 (含 Evict-on-Write)
+│   │   └── metrics_service.py  # Prometheus 监控指标服务 (LLM, Redis, Guardrail, HITL, Node)
 │   └── agent/
 │       ├── graph.py            # LangGraph 状态机定义与工作流编排 (StateGraph)
 │       ├── engine.py           # Agent 核心引擎 (前置护栏短路路由与 SSE 事件转化)
@@ -66,6 +69,12 @@
 │       ├── knowledge.py        # 向量/关键词混合 RAG 知识检索
 │       ├── tools.py            # Tool Registry 工具注册中心
 │       └── ingest_knowledge.py # 知识库切片与向量入库脚本
+│
+├── monitoring/                  # 生产级监控配置
+│   ├── prometheus/             # Prometheus 抓取配置 (prometheus.yml)
+│   └── grafana/                # Grafana 自动配置与即插即用看板
+│       ├── provisioning/       # 数据源与仪表板 Provider 配置
+│       └── dashboards/         # Workforce Operations Agent 专用监控面板 JSON
 │
 ├── src/                         # React 前端
 │   ├── App.tsx                 # 主应用组件
@@ -83,8 +92,8 @@
 │       └── SettingsModal.tsx   # 设置面板
 │       ├── HitlApprovalCard.tsx # 原生人机协同门禁交互卡片 (含单向终态审计回执)
 │       ├── PendingApprovalsModal.tsx # 主管审批中心抽屉 (待审单据/一键批复/单向终态)
-
 │
+├── docker-compose.yml           # 容器编排 (Postgres, Chroma, Prometheus, Grafana)
 └── README.md
 ```
 
@@ -94,14 +103,19 @@
 本系统采用生产级容器化微服务：
 - **PostgreSQL 18-alpine** (5432): 持久化员工档案、假期余额、日历日程、审批流与 HR 服务工单；
 - **Chroma 向量数据库** (8002): 存储企业 HR 政策与规章制度的密集向量切片；
-- **Ollama BGE-M3** (11434): 本地 1024 维密集语义向量生成模型。
+- **Ollama BGE-M3** (11434): 本地 1024 维密集语义向量生成模型；
+- **Prometheus v3.1.0** (9091): 时序指标收集引擎，自动以 5s 周期抓取后端 `/metrics`；
+- **Grafana 11.5.1** (3002): 开箱即用可观测性仪表板（预置数据源与看板，账号 `admin` / `admin`）。
 
 ```bash
-# 启动持久化容器服务
-podman-compose up -d
+# 启动持久化数据容器与监控栈服务
+podman compose up -d
 
 # 将企业政策知识库切片并向量化写入 Chroma
 python backend/agent/ingest_knowledge.py
+
+# 验证监控端点与指标测试
+python backend/test_observability.py
 ```
 
 ### HR 适配器可插拔架构 (IHRServiceAdapter)
@@ -223,6 +237,53 @@ npm run build
 - ✅ **单向终态保障与防重放审计回执 (Single-direction Finality)**: 工业级审批不可逆设计，审批决议下达后瞬间加锁并**彻底销毁操作按钮**，原地挂载盖有审批人签字与时间戳的**不可篡改审计凭据**，杜绝二次提交与按钮复活
 - ✅ **全局事件总线与跨组件乐观同步 (`workforce:approvals_updated`)**: 统一浏览器级事件总线，Modal 审批、聊天卡片决策、Agent 工具代办多端协同，配合乐观计数递减实现 0 延迟极速反馈
 - ✅ **数据库双写与状态一致性保障**: 消除 PostgreSQL 待办清空误回退假数据 Bug，实体表持久化与内存列表双写原子同步，审批通过联动原子核减申请人假期余额
+- ✅ **全链路生产级可观测性与监控体系 (Prometheus + Grafana)**: 基于 `prometheus-fastapi-instrumentator` 与 `prometheus-client`，全面监控 HTTP QPS/延迟、LLM Token 吞吐（Input/Output）、Redis 缓存命中率（Hit/Miss/Evict）、Guardrail 拦截原因分布、HITL 门禁行为及图节点执行耗时，并预置开箱即用的 Grafana 仪表板
+
+
+## 生产级全链路可观测性与监控体系 (Prometheus + Grafana)
+
+为满足企业生产环境下的 SLA 保障、容量规划与安全审计诉求，系统构建了覆盖 **API 中间件、大模型推理、Redis 缓存、Guardrails 护栏、HITL 人机协同与工作流节点** 的全链路监控指标网（`backend/services/metrics_service.py`），并通过容器化 Prometheus + Grafana 实现秒级可视化：
+
+```
+[FastAPI / Engine / Guardrails / Cache]
+                    │
+                    ▼  (工作流内部打点)
+       [workforce_* Prometheus Metrics] ──► /metrics (端点暴露)
+                                                   ▲
+                                                   │ (5s 轮询抓取)
+                                         [Prometheus 容器 (9091)]
+                                                   │
+                                                   ▼
+                                          [Grafana 仪表板 (3002)]
+                                    (自动加载 workforce-ops.json)
+```
+
+### 1. Prometheus 监控指标规范
+
+| 指标名称 | 类型 | 核心标签 (Labels) | 业务含义与监控价值 |
+| :--- | :--- | :--- | :--- |
+| `workforce_llm_tokens_total` | Counter | `direction` (input/output), `model`, `purpose` | 统计模型输入/输出 Token 消耗量，精细核算推理成本与吞吐 |
+| `workforce_llm_calls_total` | Counter | `model`, `purpose` | 监控 LLM 外部服务调用频次与并发压力 |
+| `workforce_llm_duration_seconds` | Histogram | `model`, `purpose` | LLM 端到端生成响应时长（提供 p50/p90/p99 分位线） |
+| `workforce_redis_cache_events_total` | Counter | `event` (hit/miss/set/invalidate), `cache_type` | 评估 Redis 缓存命中率（Hit Rate）、生命周期及写操作淘汰成效 |
+| `workforce_guardrail_blocks_total` | Counter | `reason` (injection/domain_shift/...), `check_type` | 统计越狱注入、越权刺探与业务偏离短路拦截频次 |
+| `workforce_guardrail_duration_seconds`| Histogram | `check_type` (l1_regex/l2_embedding/all) | 护栏执行时延，确保安全审查在微秒/毫秒级完成 |
+| `workforce_hitl_events_total` | Counter | `event` (triggered/approved/rejected/failed), `tool_name` | 监控高危写操作门禁触发率与员工决策倾向（确认/取消） |
+| `workforce_graph_node_duration_seconds`| Histogram | `node` (knowledge_retrieval/reasoning/tool_execution) | LangGraph 各节点执行耗时瀑布分布 |
+| `http_request_duration_seconds` | Histogram | `handler`, `status`, `method` | FastAPI 全局 HTTP 响应时延与 QPS（由 Instrumentator 采集） |
+
+### 2. 极简容器启动与访问指南
+
+系统镜像完全复用本地已有镜像，零外部改动：
+```bash
+# 启动监控服务
+podman compose up -d prometheus grafana
+
+# 查看指标与看板：
+# 1. Prometheus 状态与抓取目标: http://localhost:9091/targets
+# 2. Grafana 实时监控仪表板:   http://localhost:3002 (账号/密码: admin / admin)
+# 3. 后端 Prometheus 文本端点:   http://localhost:8000/metrics
+```
 
 
 ## 前置双轨安全护栏与微秒级快速短路机制 (Guardrails Fast-Circuit)

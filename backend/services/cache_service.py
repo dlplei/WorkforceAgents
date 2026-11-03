@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, List
 
 import redis
 from config import get_redis_config
+from services.metrics_service import record_redis_cache_event
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,7 @@ def get_cached_response(
         if data_str:
             data = json.loads(data_str)
             client.hincrby("workforce:cache:metrics", "hit_count", 1)
+            record_redis_cache_event("hit", "private")
             logger.info(f"⚡ Redis [私有缓存命中] [Key: {user_key}, Employee: {emp_id}] 问题: '{question[:40]}...'")
             return data
     except Exception as e:
@@ -237,6 +239,7 @@ def get_cached_response(
 
     # 2. 如果是个人私有提问（如“查我目前的假期余额”），未命中自己私有缓存时，绝对不能读公共库或其他人的数据！
     if is_personal_intent:
+        record_redis_cache_event("miss", "private")
         logger.info(f"🔒 提问包含个人私有诉求 '{question[:30]}...'，员工 {emp_id} 未建立私有缓存，绕过公共缓存直通模型")
         return None
 
@@ -250,8 +253,10 @@ def get_cached_response(
             if data.get("is_private", False) or is_personal_request(question, data.get("tools_used")):
                 logger.warning(f"⚠️ 公共缓存键 {global_key} 包含私有数据特征，拒绝跨账号下发，主动淘汰")
                 client.delete(global_key)
+                record_redis_cache_event("invalidate", "public")
                 return None
             client.hincrby("workforce:cache:metrics", "hit_count", 1)
+            record_redis_cache_event("hit", "public")
             logger.info(f"⚡ Redis [公共缓存命中] [Key: {global_key}] 问题: '{question[:40]}...'")
             return data
     except Exception as e:
@@ -265,14 +270,17 @@ def get_cached_response(
             data = json.loads(data_str)
             if not is_personal_request(question, data.get("tools_used")):
                 client.hincrby("workforce:cache:metrics", "hit_count", 1)
+                record_redis_cache_event("hit", "public")
                 logger.info(f"⚡ Redis [兼容公共缓存命中] [Key: {old_key}] 问题: '{question[:40]}...'")
                 return data
             else:
                 logger.warning(f"🧹 检测到旧版非隔离私有缓存: {old_key}，立即安全销毁")
                 client.delete(old_key)
+                record_redis_cache_event("invalidate", "private")
     except Exception:
         pass
 
+    record_redis_cache_event("miss", "public")
     return None
 
 
@@ -332,6 +340,7 @@ def set_cached_response(
     try:
         client.set(key, json.dumps(payload, ensure_ascii=False, default=str), ex=expire_seconds)
         client.hincrby("workforce:cache:metrics", "set_count", 1)
+        record_redis_cache_event("put", "private" if is_personal else "public")
         tag = f"私有缓存 [Employee: {employee_id}]" if is_personal else "公共缓存 [Global]"
         logger.info(f"💾 AI 回复已成功写入 Redis {tag} [Key: {key}, TTL: {expire_seconds}s]")
         return True
@@ -440,6 +449,7 @@ def invalidate_cache_on_write(tool_name: str, employee_id: Optional[str] = None)
 
         if deleted_count > 0:
             client.hincrby("workforce:cache:metrics", "evict_on_write_count", deleted_count)
+            record_redis_cache_event("invalidate", "all")
     except Exception as e:
         logger.error(f"执行 Evict-on-Write 主动淘汰异常: {e}")
 
@@ -456,6 +466,7 @@ def clear_cache(pattern: str = "workforce:cache:*") -> int:
         keys = client.keys(pattern)
         if keys:
             deleted = client.delete(*keys)
+            record_redis_cache_event("clear", "all")
             logger.info(f"🧹 已清空 {deleted} 个 Redis 缓存键 (匹配: {pattern})")
             return deleted
         return 0

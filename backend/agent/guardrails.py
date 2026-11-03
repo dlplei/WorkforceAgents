@@ -5,11 +5,14 @@ Guardrails - 输入侧安全审查、偏离业务过滤与情绪意图分析
 """
 import os
 import re
+import time
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from dataclasses import dataclass, field
 import httpx
 import numpy as np
+
+from services.metrics_service import record_guardrail_block, record_guardrail_latency
 
 logger = logging.getLogger(__name__)
 
@@ -177,10 +180,12 @@ HR_BUSINESS_KEYWORDS = [
 
 def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> GuardrailResult:
     """
-    全面评估用户输入的安全性、业务相关性与情绪状态
+    全面评估用户输入的安全性、业务相关性与情绪状态，并上报可观测性 Prometheus 指标
     """
+    start_t = time.perf_counter()
     msg = user_message.strip()
     if not msg:
+        record_guardrail_latency("all", time.perf_counter() - start_t)
         return GuardrailResult(
             action="allow",
             category="safe",
@@ -190,6 +195,8 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
     # ---------------- 1. 提示词注入与越狱拦截 ----------------
     for pat in INJECTION_PATTERNS:
         if pat.search(msg):
+            record_guardrail_block("injection_attack", "l1_regex")
+            record_guardrail_latency("l1_regex", time.perf_counter() - start_t)
             logger.warning(f"🚨 [Guardrails 拦截] 触发提示词注入/越狱拦截: {msg[:60]}")
             return GuardrailResult(
                 action="block",
@@ -202,6 +209,8 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
     # ---------------- 2. 越权敏感数据刺探拦截 ----------------
     for pat in UNAUTHORIZED_PATTERNS:
         if pat.search(msg):
+            record_guardrail_block("unauthorized_probe", "l1_regex")
+            record_guardrail_latency("l1_regex", time.perf_counter() - start_t)
             logger.warning(f"🔒 [Guardrails 拦截] 触发越权敏感数据刺探拦截: {msg[:60]}")
             return GuardrailResult(
                 action="block",
@@ -216,6 +225,8 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
         if pat.search(msg):
             has_business_intent = any(k in msg for k in HR_BUSINESS_KEYWORDS)
             if not has_business_intent:
+                record_guardrail_block("hostile_abuse", "l1_regex")
+                record_guardrail_latency("l1_regex", time.perf_counter() - start_t)
                 logger.warning(f"⚠️ [Guardrails 拦截] 触发无业务意图的恶意攻击拦截: {msg[:60]}")
                 return GuardrailResult(
                     action="block",
@@ -248,6 +259,8 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
 
     # ---------------- 5. 纯打招呼问候 ----------------
     if GREETING_PATTERN.match(msg):
+        record_guardrail_block("greeting", "l1_regex")
+        record_guardrail_latency("l1_regex", time.perf_counter() - start_t)
         return GuardrailResult(
             action="guide_off_topic",
             category="greeting",
@@ -268,6 +281,7 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
     has_hr_context = any(k in msg for k in HR_BUSINESS_KEYWORDS)
     if not has_hr_context:
         off_topic_reason = ""
+        check_type = "l1_regex"
         # 6.1 L1 正则模式快速匹配（微秒级命中明确高频偏离模式）
         for pat in LITERATURE_PATTERNS:
             if pat.search(msg):
@@ -295,8 +309,11 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
             max_sim, is_aligned = evaluate_semantic_alignment(msg)
             if not is_aligned and max_sim is not None:
                 off_topic_reason = f"语义空间偏离企业人事业务领域 (领域相似度仅 {max_sim:.2f})"
+                check_type = "l2_embedding"
 
         if off_topic_reason:
+            record_guardrail_block("domain_shift", check_type)
+            record_guardrail_latency(check_type, time.perf_counter() - start_t)
             logger.info(f"🧭 [Guardrails 引导] 判定为偏离业务 ({off_topic_reason}): {msg[:50]}")
             return GuardrailResult(
                 action="guide_off_topic",
@@ -316,6 +333,7 @@ def evaluate_guardrails(user_message: str, history: Optional[List[Dict[str, Any]
             )
 
     # ---------------- 7. 放行通过 ----------------
+    record_guardrail_latency("all", time.perf_counter() - start_t)
     return GuardrailResult(
         action="allow",
         category="safe",

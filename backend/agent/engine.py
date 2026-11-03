@@ -12,6 +12,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from config import LLMConfig, get_config
 from agent.graph import build_workforce_graph, build_system_prompt
 from agent.guardrails import evaluate_guardrails
+from services.metrics_service import record_llm_usage, record_hitl_action, record_node_duration
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -114,6 +115,8 @@ class AgentEngine:
             "hitl_confirmed": hitl_confirmed,
         }
 
+        node_start_times: Dict[str, float] = {}
+
         try:
             async for ev in graph.astream_events(
                 initial_state,
@@ -125,6 +128,9 @@ class AgentEngine:
 
                 # 1. 状态图节点进入
                 if event_kind == "on_chain_start":
+                    if name in ("knowledge_retrieval", "reasoning", "tool_execution"):
+                        node_start_times[name] = asyncio.get_event_loop().time()
+
                     if name == "knowledge_retrieval":
                         yield {"type": "node_enter", "content": "knowledge_retrieval"}
                     elif name == "reasoning":
@@ -136,6 +142,10 @@ class AgentEngine:
 
                 # 2. 状态图节点退出
                 elif event_kind == "on_chain_end":
+                    if name in node_start_times:
+                        duration = asyncio.get_event_loop().time() - node_start_times.pop(name, 0.0)
+                        record_node_duration(name, duration)
+
                     if name == "knowledge_retrieval":
                         yield {"type": "node_exit", "content": "knowledge_retrieval"}
                     elif name == "reasoning":
@@ -148,12 +158,16 @@ class AgentEngine:
 
                 # 3. 自定义事件（工具调用、工具返回与原生 HITL 门禁挂起请求）
                 elif event_kind == "on_custom_event":
-                    if ev.get("name") == "tool_call":
-                        yield {"type": "tool_call", "data": ev.get("data")}
-                    elif ev.get("name") == "tool_result":
-                        yield {"type": "tool_result", "data": ev.get("data")}
-                    elif ev.get("name") == "hitl_request":
-                        yield {"type": "hitl_request", "data": ev.get("data")}
+                    ev_name = ev.get("name")
+                    ev_data = ev.get("data")
+                    if ev_name == "tool_call":
+                        yield {"type": "tool_call", "data": ev_data}
+                    elif ev_name == "tool_result":
+                        yield {"type": "tool_result", "data": ev_data}
+                    elif ev_name == "hitl_request":
+                        tool_name = (ev_data or {}).get("tool_name", "unknown")
+                        record_hitl_action("triggered", tool_name)
+                        yield {"type": "hitl_request", "data": ev_data}
 
                 # 4. 模型流式输出
                 elif event_kind == "on_chat_model_stream":
@@ -175,9 +189,24 @@ class AgentEngine:
                         yield {"type": "token", "content": chunk.content}
                         full_content += chunk.content
 
-                # 5. 模型输出结束（兜底处理）
+                # 5. 模型输出结束（统计 Token 与耗时兜底）
                 elif event_kind == "on_chat_model_end":
                     output = ev.get("data", {}).get("output")
+                    if output:
+                        # 尝试提取 usage_metadata
+                        usage = getattr(output, "usage_metadata", None) or {}
+                        p_tokens = usage.get("input_tokens", 0)
+                        c_tokens = usage.get("output_tokens", 0)
+                        if not p_tokens and not c_tokens:
+                            c_tokens = len(getattr(output, "content", "") or "")
+                            p_tokens = max(10, len(user_message))
+                        record_llm_usage(
+                            prompt_tokens=p_tokens,
+                            completion_tokens=c_tokens,
+                            model=getattr(self.config, "model_name", "qwen2.5"),
+                            purpose="reasoning",
+                        )
+
                     if output and not getattr(output, "tool_calls", None):
                         output_text = getattr(output, "content", "")
                         if not full_content and output_text:

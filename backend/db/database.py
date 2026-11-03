@@ -112,11 +112,23 @@ def get_db_connection():
 
 
 def init_db() -> bool:
-    """检查并确认数据库连接，并确保初始角色就绪"""
+    """检查并确认数据库连接，并确保初始角色与数据库表字段就绪"""
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1;")
+                try:
+                    # 动态平滑迁移：补齐审批流历史与审计留言字段
+                    cur.execute(
+                        """
+                        ALTER TABLE approvals ADD COLUMN IF NOT EXISTS comment TEXT;
+                        ALTER TABLE approvals ADD COLUMN IF NOT EXISTS action_date VARCHAR(50);
+                        """
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+
                 try:
                     cur.execute(
                         """
@@ -139,6 +151,15 @@ def init_db() -> bool:
                             reason = '节后调休探亲，已交接前端开发进度', 
                             request_date = '2026-05-15'
                         WHERE id = 'APR-001' AND (start_date IS NULL OR end_date IS NULL);
+                        UPDATE approvals 
+                        SET comment = '票据合规，准予报销', action_date = '2026-01-11'
+                        WHERE id = 'APR-002' AND (comment IS NULL OR action_date IS NULL);
+                        UPDATE approvals
+                        SET comment = '审批流程已办结'
+                        WHERE status IN ('approved', 'rejected') AND (comment IS NULL OR comment = '');
+                        UPDATE approvals
+                        SET action_date = COALESCE(NULLIF(action_date, ''), request_date, '2026-05-15')
+                        WHERE status IN ('approved', 'rejected') AND (action_date IS NULL OR action_date = '');
                         """
                     )
                     conn.commit()

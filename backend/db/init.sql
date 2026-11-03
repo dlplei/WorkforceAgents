@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS approvals (
     start_date VARCHAR(50),
     end_date VARCHAR(50),
     reason TEXT,
-    approver VARCHAR(100)
+    approver VARCHAR(100),
+    comment TEXT,
+    action_date VARCHAR(50)
 );
 
 -- HR 服务工单表 (Service Request / Tickets)
@@ -82,11 +84,13 @@ VALUES
 ('E10293', '2026-02-01', '春节假期开始', 'holiday');
 
 -- 插入初始审批单
-INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
+INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver, comment, action_date)
 VALUES
-('APR-001', 'E10293', '张明', '年假申请', 'pending', '2026-05-15', '2026-06-01', '2026-06-02', '节后调休探亲，已交接前端开发进度', '李伟'),
-('APR-002', 'E10293', '张明', '差旅报销', 'approved', '2026-01-10', '2026-01-12', '2026-01-13', '上海客户技术支持差旅', '李伟')
+('APR-001', 'E10293', '张明', '年假申请', 'pending', '2026-05-15', '2026-06-01', '2026-06-02', '节后调休探亲，已交接前端开发进度', '李伟', NULL, NULL),
+('APR-002', 'E10293', '张明', '差旅报销', 'approved', '2026-01-10', '2026-01-12', '2026-01-13', '上海客户技术支持差旅', '李伟', '票据合规，准予报销', '2026-01-11')
 ON CONFLICT (id) DO UPDATE SET
   start_date = COALESCE(approvals.start_date, EXCLUDED.start_date),
   end_date = COALESCE(approvals.end_date, EXCLUDED.end_date),
-  reason = COALESCE(approvals.reason, EXCLUDED.reason);
+  reason = COALESCE(approvals.reason, EXCLUDED.reason),
+  comment = COALESCE(approvals.comment, EXCLUDED.comment),
+  action_date = COALESCE(approvals.action_date, EXCLUDED.action_date);

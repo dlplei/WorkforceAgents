@@ -1,17 +1,75 @@
-import { useState, useEffect } from 'react';
-import { Menu, Bot, Settings, Layers, Workflow } from 'lucide-react';
-import type { AppConfig, ChatMessage } from './types';
-import { loadConfig, defaultConfig } from './config';
+import { useState, useEffect, useCallback } from 'react';
+import { Menu, Bot, Settings, Layers, Workflow, ChevronDown, CheckSquare, UserCheck } from 'lucide-react';
+import type { AppConfig, ChatMessage, EmployeeProfile } from './types';
+import { loadConfig, defaultConfig, currentEmployee as fallbackEmployee } from './config';
 import ChatInterface from './components/ChatInterface';
 import Sidebar, { ChatSession } from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
+import PendingApprovalsModal from './components/PendingApprovalsModal';
 
 interface FullSession extends ChatSession {
   messages: ChatMessage[];
 }
 
-const STORAGE_KEY = 'wf_agent_sessions_v1';
+const PERSONA_STORAGE_KEY = 'wf_agent_persona_emp_id';
+const getPersonaSessionStorageKey = (empId: string) => `wf_agent_sessions_${empId}_v2`;
+
+const loadSessionsForPersona = (empId: string): FullSession[] => {
+  try {
+    const saved = localStorage.getItem(getPersonaSessionStorageKey(empId));
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.warn(`Failed to parse saved sessions for ${empId}:`, e);
+  }
+  // 针对默认员工 E10293，兼容旧版未隔离的 storage
+  if (empId === 'E10293') {
+    try {
+      const legacySaved = localStorage.getItem('wf_agent_sessions_v1');
+      if (legacySaved) {
+        const parsed = JSON.parse(legacySaved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+  }
+  return [{ id: `session-${empId}-${Date.now()}`, title: '新对话', timestamp: Date.now(), messages: [] }];
+};
+
+const DEFAULT_PERSONAS: EmployeeProfile[] = [
+  {
+    id: 'E10293',
+    name: '张明',
+    department: '技术研发部',
+    position: '高级前端工程师',
+    level: 'P6',
+    location: '北京',
+    manager: '李伟',
+    leave_balance: { annual: 7, sick: 5, personal: 2 },
+  },
+  {
+    id: 'E10001',
+    name: '李伟',
+    department: '技术研发部',
+    position: '技术总监 / 研发主管',
+    level: 'M1',
+    location: '北京',
+    manager: '赵静',
+    leave_balance: { annual: 15, sick: 10, personal: 5 },
+  },
+  {
+    id: 'E10456',
+    name: '王芳',
+    department: '人力资源部',
+    position: 'HRBP',
+    level: 'P7',
+    location: '上海',
+    manager: '赵静',
+    leave_balance: { annual: 12, sick: 8, personal: 3 },
+  },
+];
 
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
@@ -20,21 +78,90 @@ export default function App() {
   const [showGraph, setShowGraph] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activePrompt, setActivePrompt] = useState<string>('');
+  const [employees, setEmployees] = useState<EmployeeProfile[]>(DEFAULT_PERSONAS);
+  const [currentEmpId, setCurrentEmpId] = useState<string>(() => {
+    return localStorage.getItem(PERSONA_STORAGE_KEY) || 'E10293';
+  });
+  const [currentEmployee, setCurrentEmployee] = useState<EmployeeProfile>(() => {
+    const savedId = localStorage.getItem(PERSONA_STORAGE_KEY) || 'E10293';
+    return DEFAULT_PERSONAS.find((e) => e.id === savedId) || DEFAULT_PERSONAS[0];
+  });
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
+  const [showApprovalsModal, setShowApprovalsModal] = useState(false);
+  const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
 
-  const [sessions, setSessions] = useState<FullSession[]>(() => {
+  const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
+
+  const refreshEmployeeData = useCallback(async () => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      const res = await fetch(`${backendBase}/api/employee`, {
+        headers: { 'X-Employee-Id': currentEmpId },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentEmployee(data);
       }
     } catch (e) {
-      console.warn('Failed to parse saved sessions:', e);
+      console.warn('Failed to refresh employee data:', e);
     }
-    return [{ id: `session-${Date.now()}`, title: '新对话', timestamp: Date.now(), messages: [] }];
+  }, [backendBase, currentEmpId]);
+
+  const refreshPendingCount = useCallback(async () => {
+    try {
+      const res = await fetch(`${backendBase}/api/approvals/pending`, {
+        headers: { 'X-Employee-Id': currentEmpId },
+      });
+      if (res.ok) {
+        const list = await res.json();
+        setPendingApprovalsCount(Array.isArray(list) ? list.length : 0);
+      }
+    } catch (e) {
+      console.warn('Failed to refresh pending count:', e);
+    }
+  }, [backendBase, currentEmpId]);
+
+  useEffect(() => {
+    const fetchEmployees = async () => {
+      try {
+        const res = await fetch(`${backendBase}/api/employees`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setEmployees(data);
+            const found = data.find((e: EmployeeProfile) => e.id === currentEmpId);
+            if (found) setCurrentEmployee(found);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to fetch employees:', e);
+      }
+    };
+    fetchEmployees();
+  }, [backendBase, currentEmpId]);
+
+  useEffect(() => {
+    refreshEmployeeData();
+    refreshPendingCount();
+  }, [currentEmpId, refreshEmployeeData, refreshPendingCount]);
+
+  // 全局事件总线联动：实时监听待办审批状态变更与请假变动
+  useEffect(() => {
+    const handleApprovalsUpdated = () => {
+      refreshEmployeeData();
+      refreshPendingCount();
+    };
+    window.addEventListener('workforce:approvals_updated', handleApprovalsUpdated);
+    return () => {
+      window.removeEventListener('workforce:approvals_updated', handleApprovalsUpdated);
+    };
+  }, [refreshEmployeeData, refreshPendingCount]);
+
+  const [sessions, setSessions] = useState<FullSession[]>(() => {
+    const initialEmpId = localStorage.getItem(PERSONA_STORAGE_KEY) || 'E10293';
+    return loadSessionsForPersona(initialEmpId);
   });
 
-  const [currentSessionId, setCurrentSessionId] = useState<string>(() => sessions[0]?.id || `session-${Date.now()}`);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => sessions[0]?.id || `session-${currentEmpId}-${Date.now()}`);
 
   useEffect(() => {
     const saved = loadConfig();
@@ -43,11 +170,36 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+      localStorage.setItem(getPersonaSessionStorageKey(currentEmpId), JSON.stringify(sessions));
     } catch (e) {
       console.warn('Failed to persist sessions:', e);
     }
-  }, [sessions]);
+  }, [sessions, currentEmpId]);
+
+  const handleSwitchPersona = (emp: EmployeeProfile) => {
+    if (emp.id === currentEmpId) {
+      setPersonaMenuOpen(false);
+      return;
+    }
+
+    // 1. 持久化保存当前角色的会话
+    try {
+      localStorage.setItem(getPersonaSessionStorageKey(currentEmpId), JSON.stringify(sessions));
+    } catch (e) {
+      console.warn('Failed to persist sessions on switch:', e);
+    }
+
+    // 2. 加载目标角色的专属会话
+    const nextSessions = loadSessionsForPersona(emp.id);
+    setSessions(nextSessions);
+    setCurrentSessionId(nextSessions[0].id);
+
+    // 3. 切换角色状态与工号
+    setCurrentEmpId(emp.id);
+    setCurrentEmployee(emp);
+    localStorage.setItem(PERSONA_STORAGE_KEY, emp.id);
+    setPersonaMenuOpen(false);
+  };
 
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
   const messages = currentSession ? currentSession.messages : [];
@@ -66,7 +218,7 @@ export default function App() {
 
   const handleNewChat = () => {
     const newSession: FullSession = {
-      id: `session-${Date.now()}`,
+      id: `session-${currentEmpId}-${Date.now()}`,
       title: '新对话',
       timestamp: Date.now(),
       messages: [],
@@ -80,7 +232,7 @@ export default function App() {
       const filtered = prev.filter((s) => s.id !== id);
       if (filtered.length === 0) {
         const fallback: FullSession = {
-          id: `session-${Date.now()}`,
+          id: `session-${currentEmpId}-${Date.now()}`,
           title: '新对话',
           timestamp: Date.now(),
           messages: [],
@@ -131,6 +283,107 @@ export default function App() {
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Persona Switcher Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setPersonaMenuOpen((prev) => !prev)}
+              className="flex items-center space-x-2 px-2.5 py-1.5 text-xs rounded-lg bg-slate-700/60 hover:bg-slate-700 border border-slate-600/60 transition-colors"
+              title="切换当前体验身份"
+            >
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  currentEmployee.level.startsWith('M')
+                    ? 'bg-amber-400'
+                    : currentEmployee.department.includes('人力')
+                    ? 'bg-purple-400'
+                    : 'bg-blue-400'
+                }`}
+              />
+              <span className="font-medium text-slate-200">
+                {currentEmployee.name} ({currentEmployee.id})
+              </span>
+              <span className="text-[10px] text-slate-400 hidden lg:inline">
+                · {currentEmployee.position}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+            </button>
+
+            {personaMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setPersonaMenuOpen(false)}
+                />
+                <div className="absolute right-0 mt-1 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+                  <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 border-b border-slate-700/60 uppercase tracking-wider flex items-center justify-between">
+                    <span>切换模拟身份 (RBAC)</span>
+                    <UserCheck className="w-3 h-3 text-cyan-400" />
+                  </div>
+                  {employees.map((emp) => {
+                    const isSelected = emp.id === currentEmployee.id;
+                    const isManager = emp.level.startsWith('M');
+                    const isHR = emp.department.includes('人力');
+                    return (
+                      <button
+                        key={emp.id}
+                        onClick={() => handleSwitchPersona(emp)}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors ${
+                          isSelected
+                            ? 'bg-blue-600/20 text-blue-300 font-medium'
+                            : 'hover:bg-slate-700/60 text-slate-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center space-x-1.5">
+                            <span>{emp.name}</span>
+                            <span className="text-[10px] text-slate-400">({emp.id})</span>
+                            {isManager && (
+                              <span className="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+                                主管
+                              </span>
+                            )}
+                            {isHR && (
+                              <span className="text-[9px] px-1 py-0.2 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded">
+                                HRBP
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">
+                            {emp.department} · {emp.position}
+                          </div>
+                        </div>
+                        {isSelected && <span className="text-blue-400 text-xs">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Pending Approvals Entry Button */}
+          {(currentEmployee.level.startsWith('M') ||
+            currentEmployee.department.includes('人力') ||
+            pendingApprovalsCount > 0) && (
+            <button
+              onClick={() => setShowApprovalsModal(true)}
+              className={`flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-colors border ${
+                pendingApprovalsCount > 0
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30 animate-pulse'
+                  : 'bg-slate-700/40 text-slate-300 border-slate-700/60 hover:bg-slate-700/60'
+              }`}
+              title="查看与审批待办事项"
+            >
+              <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+              <span>待办审批</span>
+              {pendingApprovalsCount > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-amber-500 text-slate-900 leading-tight">
+                  {pendingApprovalsCount}
+                </span>
+              )}
+            </button>
+          )}
+
           {/* Status indicator */}
           <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs bg-green-500/10 text-green-400">
             <span className="w-1.5 h-1.5 rounded-full bg-green-400"></span>
@@ -189,6 +442,7 @@ export default function App() {
               currentSessionId={currentSessionId}
               onSelectSession={setCurrentSessionId}
               onDeleteSession={handleDeleteSession}
+              employee={currentEmployee}
             />
           </div>
         )}
@@ -196,7 +450,7 @@ export default function App() {
         {/* Chat Area */}
         <div className="flex-1 flex flex-col min-w-0">
           <ChatInterface
-            key={currentSessionId}
+            key={`${currentSessionId}-${currentEmployee.id}`}
             config={config}
             onOpenSettings={() => setShowSettings(true)}
             messages={messages}
@@ -206,9 +460,29 @@ export default function App() {
             onFirstMessageSent={handleFirstMessageSent}
             showGraph={showGraph}
             setShowGraph={setShowGraph}
+            employee={currentEmployee}
+            onActionCompleted={() => {
+              refreshEmployeeData();
+              refreshPendingCount();
+            }}
           />
         </div>
       </div>
+
+      {/* Pending Approvals Modal */}
+      {showApprovalsModal && (
+        <PendingApprovalsModal
+          isOpen={showApprovalsModal}
+          onClose={() => setShowApprovalsModal(false)}
+          currentEmployee={currentEmployee}
+          backendUrl={config.backendUrl}
+          onApprovalDone={() => {
+            setPendingApprovalsCount((prev) => Math.max(0, prev - 1));
+            refreshEmployeeData();
+            refreshPendingCount();
+          }}
+        />
+      )}
 
       {/* Settings Modal */}
       {showSettings && (

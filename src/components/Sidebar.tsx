@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Plus, MessageSquare, Trash2, Calendar, FileText, Plane, HelpCircle, ChevronUp, ChevronDown } from 'lucide-react';
-import { currentEmployee } from '../config';
+import { Plus, MessageSquare, Trash2, Calendar, FileText, Plane, HelpCircle, ChevronUp, ChevronDown, CheckSquare, ShieldCheck } from 'lucide-react';
+import { currentEmployee as defaultEmployee } from '../config';
+import type { EmployeeProfile } from '../types';
 
 export interface ChatSession {
   id: string;
@@ -15,6 +16,7 @@ interface Props {
   currentSessionId: string;
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
+  employee?: EmployeeProfile;
 }
 
 export default function Sidebar({
@@ -24,15 +26,36 @@ export default function Sidebar({
   currentSessionId,
   onSelectSession,
   onDeleteSession,
+  employee,
 }: Props) {
   const [showProfileDetail, setShowProfileDetail] = useState(false);
+  const activeEmp = employee || {
+    id: defaultEmployee.id,
+    name: defaultEmployee.name,
+    department: defaultEmployee.department,
+    position: defaultEmployee.position,
+    level: defaultEmployee.level,
+    location: defaultEmployee.location,
+    manager: defaultEmployee.manager,
+    leave_balance: defaultEmployee.leaveBalance,
+  };
 
-  const quickSkills = [
-    { label: '查询假期余额', icon: Calendar, prompt: '帮我查一下我目前的假期余额' },
-    { label: '申请年假/请假', icon: FileText, prompt: '我想申请下周一休年假 1 天，请帮我提交申请' },
-    { label: '差旅报销标准', icon: Plane, prompt: '公司出差差旅标准是什么？住宿和补贴上限是多少？' },
-    { label: '开具在职证明', icon: HelpCircle, prompt: '我需要开具一份用于办理签证的在职证明' },
-  ];
+  const isManager = activeEmp.level?.startsWith('M') || activeEmp.name === '李伟' || activeEmp.position?.includes('总监');
+
+  const quickSkills = isManager
+    ? [
+        { label: '查看待我审批单据', icon: CheckSquare, prompt: '查看待我审批的下属请假单有哪些？' },
+        { label: '对话审批张明请假', icon: ShieldCheck, prompt: '同意张明的年假申请' },
+        { label: '查询本人假期余额', icon: Calendar, prompt: '查询我自己的年假余额还剩几天' },
+        { label: '差旅报销标准政策', icon: Plane, prompt: '总监/经理级别的差旅报销与住宿标准是多少？' },
+      ]
+    : [
+        { label: '查询假期余额', icon: Calendar, prompt: '帮我查一下我目前的假期余额' },
+        { label: '申请年假/请假', icon: FileText, prompt: '我想申请下周一休年假 1 天，请帮我提交申请' },
+        { label: '差旅报销标准', icon: Plane, prompt: '公司出差差旅标准是什么？住宿和补贴上限是多少？' },
+        { label: '开具在职证明', icon: HelpCircle, prompt: '我需要开具一份用于办理签证的在职证明' },
+      ];
+
 
   return (
     <aside className="h-full flex flex-col bg-slate-900 border-r border-slate-800 select-none">
@@ -104,25 +127,25 @@ export default function Sidebar({
           <div className="mb-3 p-3 rounded-lg bg-slate-800/90 border border-slate-700/60 space-y-2 text-xs">
             <div className="flex items-center justify-between text-slate-300 font-medium border-b border-slate-700/50 pb-1.5">
               <span>员工档案</span>
-              <span className="text-[10px] text-slate-400">{currentEmployee.id}</span>
+              <span className="text-[10px] text-slate-400">{activeEmp.id}</span>
             </div>
             <div className="space-y-1 text-[11px] text-slate-300">
               <div className="flex justify-between">
                 <span className="text-slate-400">常驻地:</span>
-                <span>{currentEmployee.location}</span>
+                <span>{activeEmp.location}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">汇报人:</span>
-                <span>{currentEmployee.manager}</span>
+                <span>{activeEmp.manager}</span>
               </div>
             </div>
 
             <div className="pt-1.5 border-t border-slate-700/50 space-y-1.5">
               <div className="text-[11px] font-medium text-slate-400">假期余额</div>
               {[
-                { label: '年假', val: currentEmployee.leaveBalance.annual, max: 15, color: 'bg-blue-500' },
-                { label: '病假', val: currentEmployee.leaveBalance.sick, max: 10, color: 'bg-emerald-500' },
-                { label: '事假', val: currentEmployee.leaveBalance.personal, max: 5, color: 'bg-amber-500' },
+                { label: '年假', val: (activeEmp.leave_balance?.annual ?? 0), max: 15, color: 'bg-blue-500' },
+                { label: '病假', val: (activeEmp.leave_balance?.sick ?? 0), max: 10, color: 'bg-emerald-500' },
+                { label: '事假', val: (activeEmp.leave_balance?.personal ?? 0), max: 5, color: 'bg-amber-500' },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between text-[11px]">
                   <span className="text-slate-400">{item.label}</span>
@@ -148,14 +171,14 @@ export default function Sidebar({
         >
           <div className="flex items-center space-x-2.5 min-w-0">
             <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
-              {currentEmployee.name[0]}
+              {activeEmp.name?.[0] || '员'}
             </div>
             <div className="min-w-0">
               <div className="text-xs font-medium text-slate-200 truncate leading-tight">
-                {currentEmployee.name}
+                {activeEmp.name}
               </div>
               <div className="text-[10px] text-slate-400 truncate leading-tight">
-                {currentEmployee.department} · {currentEmployee.level}
+                {activeEmp.department} · {activeEmp.level}
               </div>
             </div>
           </div>

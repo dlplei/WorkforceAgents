@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ShieldAlert, ShieldCheck, Ban, CheckCircle2,
   Calendar, FileText, Ticket, Clock,
@@ -19,6 +19,13 @@ export default function HitlApprovalCard({
 }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [rejecting, setRejecting] = useState(false);
+  const [localStatus, setLocalStatus] = useState<'pending' | 'approved' | 'rejected'>(request.status || 'pending');
+
+  useEffect(() => {
+    if (request.status && request.status !== 'pending') {
+      setLocalStatus(request.status);
+    }
+  }, [request.status]);
 
   const getIcon = (cat: string) => {
     if (cat === 'leave') return <Calendar className="w-4 h-4 text-amber-400" />;
@@ -52,21 +59,33 @@ export default function HitlApprovalCard({
     );
   };
 
+  const isPending = localStatus === 'pending' && request.status === 'pending';
+  const isApproved = localStatus === 'approved' || request.status === 'approved';
+  const isRejected = localStatus === 'rejected' || request.status === 'rejected';
+
   const handleApprove = async () => {
-    if (disabled || submitting || request.status !== 'pending') return;
+    if (disabled || submitting || rejecting || !isPending) return;
     setSubmitting(true);
-    try { await onApprove(request); } finally { setSubmitting(false); }
+    try {
+      await onApprove(request);
+      setLocalStatus('approved');
+    } catch (err) {
+      setSubmitting(false);
+      throw err;
+    }
   };
 
   const handleReject = async () => {
-    if (disabled || rejecting || request.status !== 'pending') return;
+    if (disabled || submitting || rejecting || !isPending) return;
     setRejecting(true);
-    try { await onReject(request); } finally { setRejecting(false); }
+    try {
+      await onReject(request);
+      setLocalStatus('rejected');
+    } catch (err) {
+      setRejecting(false);
+      throw err;
+    }
   };
-
-  const isPending = request.status === 'pending';
-  const isApproved = request.status === 'approved';
-  const isRejected = request.status === 'rejected';
 
   const cardBorder = isApproved
     ? 'border-emerald-500/50 bg-gradient-to-b from-slate-900/90 to-emerald-950/20'

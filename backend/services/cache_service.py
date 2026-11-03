@@ -200,7 +200,7 @@ def set_cached_response(
     }
 
     try:
-        client.set(key, json.dumps(payload, ensure_ascii=False), ex=expire_seconds)
+        client.set(key, json.dumps(payload, ensure_ascii=False, default=str), ex=expire_seconds)
         client.hincrby("workforce:cache:metrics", "set_count", 1)
         logger.info(f"💾 AI 回复已成功写入 Redis 缓存 [Key: {key}, TTL: {expire_seconds}s]")
         return True

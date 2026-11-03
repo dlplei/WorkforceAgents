@@ -122,3 +122,33 @@ export interface EmployeeProfile {
     personal: number;
   };
 }
+
+// --- Approval Types ---
+export interface ApprovalItem {
+  id?: string;
+  approval_id?: string;
+  employee_id: string;
+  applicant?: string;
+  employee_name?: string;
+  type?: string;
+  approval_type?: string;
+  status: string;
+  date?: string;
+  request_date?: string;
+  submitted_at?: string;
+  start_date?: string;
+  end_date?: string;
+  reason?: string;
+  approver?: string;
+  comment?: string;
+  days?: number;
+  details?: {
+    leave_type?: string;
+    start_date?: string;
+    end_date?: string;
+    days?: number;
+    reason?: string;
+    [key: string]: any;
+  };
+}
+

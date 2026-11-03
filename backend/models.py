@@ -1,7 +1,7 @@
 """
 数据模型定义
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
@@ -107,6 +107,31 @@ class EmployeeProfile(BaseModel):
 
     def __getitem__(self, item: str):
         return getattr(self, item)
+
+
+class ApprovalActionRequest(BaseModel):
+    """主管处理审批单请求"""
+    decision: Literal["approved", "rejected"]
+    comment: Optional[str] = "已阅，同意"
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_decision(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            raw = data.get("decision") or data.get("action")
+            if raw in ("approve", "approved", "agree", "pass"):
+                data["decision"] = "approved"
+            elif raw in ("reject", "rejected", "refuse", "deny"):
+                data["decision"] = "rejected"
+        return data
+
+
+class ApprovalActionResponse(BaseModel):
+    """主管处理审批单响应"""
+    success: bool
+    message: str
+    approval: Dict[str, Any]
+    leave_balance_deducted: Optional[Dict[str, Any]] = None
 
 
 

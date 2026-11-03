@@ -80,15 +80,21 @@ class ToolRegistry:
         current_emp = get_current_employee()
         current_emp_id = current_emp["id"] if isinstance(current_emp, dict) else getattr(current_emp, "id", "E10293")
         current_emp_name = current_emp["name"] if isinstance(current_emp, dict) else getattr(current_emp, "name", "张明")
+        current_emp_level = current_emp["level"] if isinstance(current_emp, dict) else getattr(current_emp, "level", "P6")
+        is_manager = current_emp_level.startswith("M") or "总监" in str(current_emp) or current_emp_id == "E10001"
+        is_hrbp = current_emp_id == "E10456" or "HRBP" in (current_emp["position"] if isinstance(current_emp, dict) else getattr(current_emp, "position", ""))
+
         target_emp_id = arguments.get("employee_id")
         if target_emp_id and str(target_emp_id).strip() != current_emp_id:
-            logger.warning(f"🔒 [RBAC 越权拦截] 员工 {current_emp_id} 试图访问他人工号: {target_emp_id} 的工具 {name}")
-            return ToolResult(
-                tool_name=name,
-                success=False,
-                error=f"【权限拦截 (RBAC)】当前登录员工【{current_emp_name} ({current_emp_id})】无权访问或操作其他员工（工号: {target_emp_id}）的数据。根据企业数据安全与保密管理办法，普通员工仅限办理与查看本人名下事务。",
-                execution_time=0.0,
-            )
+            # 审批类工具或管理/HRBP角色放行下属查询
+            if not (is_manager or is_hrbp or name in ("review_approval_request", "query_pending_approvals")):
+                logger.warning(f"🔒 [RBAC 越权拦截] 员工 {current_emp_id} 试图访问他人工号: {target_emp_id} 的工具 {name}")
+                return ToolResult(
+                    tool_name=name,
+                    success=False,
+                    error=f"【权限拦截 (RBAC)】当前登录员工【{current_emp_name} ({current_emp_id})】无权访问或操作其他员工（工号: {target_emp_id}）的数据。根据企业数据安全与保密管理办法，普通员工仅限办理与查看本人名下事务。",
+                    execution_time=0.0,
+                )
 
         start = time.perf_counter()
         try:
@@ -504,6 +510,107 @@ registry.register(
     permission_level="confirmation",
     handler=handle_create_hr_ticket,
 )
+
+# 9. 主管查询待审批单
+async def handle_query_pending_approvals(params: dict) -> dict:
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
+    approver_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name")
+    approver_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id")
+    pending = adapter.get_pending_approvals(approver_name or approver_id)
+    return {
+        "success": True,
+        "data": {
+            "approver": approver_name,
+            "count": len(pending),
+            "pending_approvals": pending
+        }
+    }
+
+
+registry.register(
+    name="query_pending_approvals",
+    description="查询名下等待当前主管或审批人审核的单据列表（如员工请假、出差等申请）。",
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+    category="query",
+    permission_level="autonomous",
+    handler=handle_query_pending_approvals,
+)
+
+
+# 10. 主管执行审批决策
+async def handle_review_approval_request(params: dict) -> dict:
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
+    approver_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name")
+    approval_id = params.get("approval_id")
+    decision = params.get("decision", "approved")
+    comment = params.get("comment", "已阅，同意")
+
+    if not approval_id:
+        pending = adapter.get_pending_approvals(approver_name)
+        target_applicant = params.get("applicant_name")
+        if target_applicant:
+            matched = [p for p in pending if p.get("applicant") == target_applicant]
+            if matched:
+                approval_id = matched[0].get("id")
+        elif len(pending) == 1:
+            approval_id = pending[0].get("id")
+
+    if not approval_id:
+        return {"success": False, "error": "未指定需要审批的审批单号 (approval_id)，请指明具体单号或申请人姓名。"}
+
+    res = adapter.process_approval(
+        approval_id=approval_id,
+        approver_name_or_id=approver_name,
+        decision=decision,
+        comment=comment
+    )
+    return {
+        "success": res.get("success", True),
+        "data": {
+            "message": res.get("message", ""),
+            "approval": res.get("approval", {}),
+            "leave_balance_deducted": res.get("leave_balance_deducted")
+        }
+    }
+
+
+registry.register(
+    name="review_approval_request",
+    description="主管或审批人对员工提交的待办单据进行审核判定（通过或驳回）。审批通过会自动扣减申请人假期余额并更新日历日程。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "approval_id": {
+                "type": "string",
+                "description": "待审批单号，例如 'APR-001'。若不确定可通过 query_pending_approvals 先行查询",
+            },
+            "decision": {
+                "type": "string",
+                "description": "审批决策：'approved'（通过/同意）或 'rejected'（驳回/拒绝）",
+                "enum": ["approved", "rejected"],
+            },
+            "comment": {
+                "type": "string",
+                "description": "主管审批意见或批注说明",
+            },
+            "applicant_name": {
+                "type": "string",
+                "description": "申请人姓名（如张明，可用于自动定位匹配单号）",
+            },
+        },
+        "required": ["decision"],
+    },
+    category="action",
+    permission_level="autonomous",
+    handler=handle_review_approval_request,
+)
+
 
 
 # ============ HITL 辅助构建器 ============

@@ -50,6 +50,22 @@ class IHRServiceAdapter(ABC):
         pass
 
     @abstractmethod
+    def get_pending_approvals(self, approver_name_or_id: str) -> List[Dict[str, Any]]:
+        """查询待当前审批人审批的单据列表"""
+        pass
+
+    @abstractmethod
+    def process_approval(
+        self,
+        approval_id: str,
+        approver_name_or_id: str,
+        decision: str,
+        comment: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """处理审批单（通过或驳回）"""
+        pass
+
+    @abstractmethod
     def create_ticket(
         self,
         employee_id: str,
@@ -108,6 +124,18 @@ class LocalPostgresAdapter(IHRServiceAdapter):
 
     def get_approvals(self, employee_id: str, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return database.query_approvals(employee_id, request_id)
+    def get_pending_approvals(self, approver_name_or_id: str) -> List[Dict[str, Any]]:
+        return database.query_pending_approvals_for_manager(approver_name_or_id)
+
+    def process_approval(
+        self,
+        approval_id: str,
+        approver_name_or_id: str,
+        decision: str,
+        comment: Optional[str] = None
+    ) -> Dict[str, Any]:
+        return database.update_approval_status(approval_id, approver_name_or_id, decision, comment)
+
 
     def create_ticket(
         self,
@@ -230,6 +258,18 @@ class ServiceNowAdapter(IHRServiceAdapter):
 
     def get_tickets(self, employee_id: str, ticket_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return self.local_backup.get_tickets(employee_id, ticket_id)
+
+    def get_pending_approvals(self, approver_name_or_id: str) -> List[Dict[str, Any]]:
+        return self.local_backup.get_pending_approvals(approver_name_or_id)
+
+    def process_approval(
+        self,
+        approval_id: str,
+        approver_name_or_id: str,
+        decision: str,
+        comment: Optional[str] = None
+    ) -> Dict[str, Any]:
+        return self.local_backup.process_approval(approval_id, approver_name_or_id, decision, comment)
 
 
 def get_hr_adapter() -> IHRServiceAdapter:

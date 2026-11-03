@@ -3,10 +3,12 @@ Workforce Operations Agent - FastAPI Backend
 """
 import asyncio
 import json
+import decimal
+from datetime import date, datetime
 import logging
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -14,7 +16,8 @@ from pydantic import BaseModel
 from config import LLMConfig, update_config, get_config
 from agent.engine import AgentEngine
 from agent.tools import registry
-from db.database import get_current_employee, init_db
+from db.database import get_current_employee, set_current_employee_id, get_all_employees, init_db
+from models import ApprovalActionRequest, ApprovalActionResponse
 from services.hr_adapter import get_hr_adapter
 from services.cache_service import (
     init_cache,
@@ -35,6 +38,20 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+def json_serial(obj: Any) -> Any:
+    """处理 Decimal 和 date/datetime 等对象的 JSON 序列化兜底"""
+    if isinstance(obj, (decimal.Decimal, float)):
+        return float(obj)
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return str(obj)
+
+
+def safe_dumps(data: Any) -> str:
+    """安全的 JSON dumps，避免 Decimal 无法序列化导致的 SSE 断流"""
+    return json.dumps(data, ensure_ascii=False, default=json_serial)
+
+
 
 
 # ============ FastAPI App ============
@@ -76,6 +93,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.middleware("http")
+async def employee_context_middleware(request: Request, call_next):
+    """
+    企业级动态员工身份感知中间件
+    优先提取前端 Header 中的 X-Employee-Id，默认张明 (E10293)
+    """
+    emp_id = request.headers.get("X-Employee-Id") or request.query_params.get("employee_id")
+    if emp_id:
+        set_current_employee_id(emp_id.strip())
+    else:
+        set_current_employee_id("E10293")
+    response = await call_next(request)
+    return response
+
+
 
 
 # ============ Request/Response Models ============
@@ -116,6 +148,50 @@ async def root():
 async def get_employee():
     """获取当前登录员工信息"""
     return get_current_employee()
+
+@app.get("/api/employees")
+async def list_employees():
+    """获取系统中所有员工列表（供前端 Persona Switcher 快速切换）"""
+    return get_all_employees()
+
+
+@app.get("/api/approvals/pending")
+async def get_pending_approvals():
+    """获取当前登录主管/HRBP 名下待审批的单据列表"""
+    emp = get_current_employee()
+    adapter = get_hr_adapter()
+    approver_identifier = emp.name or emp.id
+    return adapter.get_pending_approvals(approver_identifier)
+
+
+@app.post("/api/approvals/{approval_id}/action", response_model=ApprovalActionResponse)
+async def process_approval_action(approval_id: str, req: ApprovalActionRequest):
+    """
+    主管处理审批单（通过/驳回）
+    通过时触发原子扣减假期余额、并在日历添加休假日程
+    """
+    emp = get_current_employee()
+    adapter = get_hr_adapter()
+    approver_identifier = emp.name or emp.id
+
+    result = adapter.process_approval(
+        approval_id=approval_id,
+        approver_name_or_id=approver_identifier,
+        decision=req.decision,
+        comment=req.comment or ("审批通过" if req.decision == "approved" else "审批驳回")
+    )
+
+    # 主动淘汰可能涉及的问答缓存
+    invalidate_cache_on_write("submit_leave_request")
+    invalidate_cache_on_write("review_approval_request")
+
+    return ApprovalActionResponse(
+        success=result.get("success", True),
+        message=result.get("message", "审批判定完成"),
+        approval=result.get("approval", {}),
+        leave_balance_deducted=result.get("leave_balance_deducted")
+    )
+
 
 
 @app.get("/api/tools")
@@ -434,8 +510,8 @@ async def chat(req: ChatRequest):
                 elif ev_type == "message_complete":
                     full_content = event.get("content", "")
 
-                # 格式化为 SSE
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                # 格式化为 SSE (使用 safe_dumps 防御 Decimal 及日期类型导致的序列化崩溃)
+                yield f"data: {safe_dumps(event)}\n\n"
 
             # 正常完成且非 HITL 门禁挂起卡片状态时，将结果缓存入 Redis
             if full_content and not has_hitl_request and not req.hitl_confirmed:
@@ -451,7 +527,7 @@ async def chat(req: ChatRequest):
             logger.error(f"💥 聊天处理错误: {type(e).__name__}: {e}")
             logger.exception("完整异常堆栈:")
             error_event = {"type": "error", "content": str(e)}
-            yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            yield f"data: {safe_dumps(error_event)}\n\n"
 
     return StreamingResponse(
         event_stream(),

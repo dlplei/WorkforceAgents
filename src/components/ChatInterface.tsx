@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap, RotateCcw, Database } from 'lucide-react';
-import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig, HitlActionRequest } from '../types';
+import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig, HitlActionRequest, EmployeeProfile } from '../types';
 import GraphInspector from './GraphInspector';
 import HitlApprovalCard from './HitlApprovalCard';
 
@@ -14,6 +14,8 @@ interface Props {
   onFirstMessageSent?: (content: string) => void;
   showGraph?: boolean;
   setShowGraph?: (show: boolean | ((prev: boolean) => boolean)) => void;
+  employee?: EmployeeProfile;
+  onActionCompleted?: () => void;
 }
 
 export default function ChatInterface({
@@ -26,6 +28,8 @@ export default function ChatInterface({
   onFirstMessageSent,
   showGraph,
   setShowGraph,
+  employee,
+  onActionCompleted,
 }: Props) {
   const [internalShowGraph, setInternalShowGraph] = useState(true);
   const isGraphOpen = showGraph !== undefined ? showGraph : internalShowGraph;
@@ -113,6 +117,7 @@ export default function ChatInterface({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Employee-Id': employee?.id || 'E10293',
         },
         body: JSON.stringify({
           message: userMessage,
@@ -323,9 +328,18 @@ export default function ChatInterface({
         setCurrentToolCalls([]);
         setCurrentToolResults([]);
         setCurrentHitlRequest(null);
+        const hasApprovalOrLeaveTool = toolCallsRef.current.some(tc => 
+          ['review_approval_request', 'submit_leave_request', 'process_approval'].includes(tc.name)
+        );
+        if (hasApprovalOrLeaveTool) {
+          onActionCompleted?.();
+          window.dispatchEvent(new CustomEvent('workforce:approvals_updated'));
+        }
+
         toolCallsRef.current = [];
         toolResultsRef.current = [];
         hitlRequestRef.current = null;
+
         break;
       }
       case 'error':
@@ -360,7 +374,10 @@ export default function ChatInterface({
       const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
       const response = await fetch(`${backendBase}/api/hitl/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Employee-Id': employee?.id || 'E10293',
+        },
         body: JSON.stringify({
           action_id: hitlReq.action_id,
           tool_name: hitlReq.tool_name,
@@ -432,6 +449,9 @@ export default function ChatInterface({
         setActiveNode('__end__');
         setTimeout(() => setActiveNode(''), 1200);
         setToastMessage(`✅ 已成功提交并流转: ${hitlReq.title}`);
+        onActionCompleted?.();
+        window.dispatchEvent(new CustomEvent('workforce:approvals_updated'));
+
       } else {
         setToastMessage(`❌ 执行失败: ${res.error || '未知错误'}`);
       }
@@ -497,6 +517,8 @@ export default function ChatInterface({
     setActiveNode('__end__');
     setTimeout(() => setActiveNode(''), 1200);
     setToastMessage('已取消该项操作');
+    onActionCompleted?.();
+    window.dispatchEvent(new CustomEvent('workforce:approvals_updated'));
   };
 
   const handleHitlEdit = (hitlReq: HitlActionRequest) => {

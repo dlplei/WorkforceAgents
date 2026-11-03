@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS hr_tickets (
 INSERT INTO employees (id, name, department, position, level, location, manager, hire_date, contract_type, benefits)
 VALUES
 ('E10293', '张明', '技术研发部', '高级前端工程师', 'P6', '北京', '李伟', '2022-03-15', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作"]'::jsonb),
+('E10001', '李伟', '技术研发部', '技术总监 / 研发主管', 'M1', '北京', '赵静', '2019-06-10', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"]'::jsonb),
 ('E10456', '王芳', '人力资源部', 'HRBP', 'P7', '上海', '赵静', '2020-08-01', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"]'::jsonb)
 ON CONFLICT (id) DO NOTHING;
 
@@ -69,6 +70,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO leave_balances (employee_id, annual, sick, personal)
 VALUES
 ('E10293', 7.0, 5.0, 2.0),
+('E10001', 15.0, 10.0, 5.0),
 ('E10456', 12.0, 8.0, 3.0)
 ON CONFLICT (employee_id) DO NOTHING;
 
@@ -80,8 +82,11 @@ VALUES
 ('E10293', '2026-02-01', '春节假期开始', 'holiday');
 
 -- 插入初始审批单
-INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, approver)
+INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
 VALUES
-('APR-001', 'E10293', '张明', '年假申请', 'pending', '2026-01-15', '李伟'),
-('APR-002', 'E10293', '张明', '差旅报销', 'approved', '2026-01-10', '李伟')
-ON CONFLICT (id) DO NOTHING;
+('APR-001', 'E10293', '张明', '年假申请', 'pending', '2026-05-15', '2026-06-01', '2026-06-02', '节后调休探亲，已交接前端开发进度', '李伟'),
+('APR-002', 'E10293', '张明', '差旅报销', 'approved', '2026-01-10', '2026-01-12', '2026-01-13', '上海客户技术支持差旅', '李伟')
+ON CONFLICT (id) DO UPDATE SET
+  start_date = COALESCE(approvals.start_date, EXCLUDED.start_date),
+  end_date = COALESCE(approvals.end_date, EXCLUDED.end_date),
+  reason = COALESCE(approvals.reason, EXCLUDED.reason);

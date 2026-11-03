@@ -142,7 +142,7 @@
           <li><a href="#context">数据流与上下文融合</a></li>
           <li><a href="#memory">Memory 系统与 Redis 缓存治理</a></li>
           <li><a href="#techstack">技术栈选型</a></li>
-          <li><a href="#security">安全与权限</a></li>
+          <li><a href="#security">安全、权限与多角色审批治理</a></li>
           <li><a href="#roadmap">实施路线图</a></li>
           <li><a href="#team">团队配置</a></li>
           <li><a href="#risks">风险分析</a></li>
@@ -278,6 +278,18 @@
                 <li>工单自动创建与追踪</li>
               </ul>
             </div>
+            <div class="card" style="border-color:#38bdf8;background:#f0f9ff;">
+              <h3 style="color:#0369a1;">👥 7. 管理者审批与多角色协同 (Manager Approval & Multi-Persona)</h3>
+              <p>支撑从基层员工到业务主管、HRBP 的全链路流程协同与身份无缝切换。</p>
+              <ul>
+                <li><strong>多身份自由切换：</strong>在张明(P6员工)、李伟(M1主管)、王芳(P7 HRBP)之间即时感知与上下文隔离</li>
+                <li><strong>待办审批抽屉面板：</strong>专属 Pending Approvals 审批中心，集中审核下属请假、报销单据</li>
+                <li><strong>自然语言审批闭环：</strong>在对话中直接指令“待我审批的单据”或“同意张明的请假单”，智能体代办</li>
+                <li><strong>单向终态与审计回执：</strong>审批后立即销毁操作按钮，替换为不可篡改的审批凭据，杜绝重复提交</li>
+                <li><strong>全局事件总线同步：</strong>跨弹窗与聊天卡片毫秒级广播同步，待办徽标计数即时动态扣减</li>
+              </ul>
+            </div>
+
           </div>
         </section>
 
@@ -380,6 +392,9 @@
               <tr><td>Transfer API</td><td>发起调动流程、查询调动状态</td><td>员工调动</td></tr>
               <tr><td>Compensation Calculator</td><td>计算薪酬变动、社保公积金影响</td><td>调动评估</td></tr>
             </tbody>
+              <tr><td>query_pending_approvals</td><td>查询当前主管或审批人名下的待办单据列表（休假/差旅）</td><td>主管查询待办、待办计数更新</td></tr>
+              <tr><td>review_approval_request</td><td>主管审批决策（同意/驳回），写入审批意见并原子扣减假期</td><td>主管自然语言审批或一键批复</td></tr>
+
           </table>
         </section>
 
@@ -450,6 +465,20 @@
             <div class="card"><h4>⑤ 人工确认 (HITL)</h4><p>员工在卡片点击【确认提交执行】(POST /api/hitl/action) → 门禁放行入库生成审批单号</p></div>
             <div class="card"><h4>⑥ 执行追踪闭环</h4><p>挂起态不推入 END；确认后严格按 hitl_gate ➔ tool_execution ➔ END 时序真实归档</p></div>
           </div>
+          <h3>示例 2：主管身份智能审批下属申请 (Persona 协同工作流)</h3>
+          <p><strong>当前身份：</strong>李伟 (E10001, 技术研发部总监 / 研发主管)<br />
+          <strong>用户输入：</strong>"张明的年假申请审批一下，同意休假，注意项目交接。"</p>
+          <pre><code>1. 识别身份与权限：李伟 (M1 管理者，具备下属审批权限)
+2. 识别意图：review_approval_request
+3. 查找下属对应待审单据：匹配申请人="张明", 状态="pending" -> APR-001 (2026-06-01至06-02 年假2天)
+4. 调用工具：review_approval_request(approval_id="APR-001", decision="approved", comment="同意休假，注意项目交接")
+5. 事务性副作用落库：
+   - 更新 approvals 表单据状态为 approved，记录审批人与时间戳
+   - 原子扣减申请人 (张明 E10293) 年假余额：7 天 -> 5 天
+   - 内存降级列表与 PostgreSQL 保持严格双写一致
+6. 广播全双工事件：dispatch workforce:approvals_updated
+7. 客户端乐观更新：主管顶部与侧边栏待办徽标计数即时 -1，弹窗与卡片操作按钮单向销毁，渲染审计回执</code></pre>
+
         </section>
 
         <!-- 八、数据流与上下文融合 -->
@@ -502,6 +531,28 @@
   8. ────────→ 若执行写操作工具 ──→ [Evict-on-Write 联动淘汰关联旧缓存] ──→
   9. ────────→ 按动态分级 TTL 写入 Redis (10m / 1h / 24h) ──→
  10. ←──────── 返回流式结构化回答 ──→</code></pre>
+          <h3>多角色身份感知 (Persona Switcher) 与会话上下文隔离架构</h3>
+          <div class="grid">
+            <div class="card">
+              <h4>🎭 多角色 Persona 动态切换</h4>
+              <p>系统内置开箱即用的三大典型企业身份矩阵：</p>
+              <ul>
+                <li><strong>张明 (E10293, P6 Senior FE)</strong>：普通员工视图，支持假期查询、请假发起、证明申请与工单维权；</li>
+                <li><strong>李伟 (E10001, M1 Director)</strong>：研发主管视图，专属 Pending Approvals 待办抽屉、徽标通知、下属单据审批与假期核减；</li>
+                <li><strong>王芳 (E10456, P7 HRBP)</strong>：HR 伙伴视图，跨部门人事政策、组织协同与员工关怀支持。</li>
+              </ul>
+            </div>
+            <div class="card">
+              <h4>📦 会话上下文隔离与 Header 透传</h4>
+              <p>保障企业级多租户与角色切换的数据安全性：</p>
+              <ul>
+                <li><strong>客户端专属隔离存储</strong>：每个 Persona 的会话历史（Sessions）使用独立的 LocalStorage 存储键，切换身份时历史对话严格隔离，不串台、不污染；</li>
+                <li><strong>全链路 Context 透传</strong>：所有前端请求携带 <code>X-Employee-Id</code> 请求头，后端动态装载对应员工画像与权限上下文；</li>
+                <li><strong>待办徽标动态感知</strong>：切换到主管时自动拉取名下下属待审数量，切换到员工时自适应归零，状态无缝对齐。</li>
+              </ul>
+            </div>
+          </div>
+
         </section>
 
         <!-- 九、Memory 系统设计与 Redis 缓存治理 -->
@@ -1022,6 +1073,71 @@
               </ul>
             </div>
           </div>
+          <h3>5. 切换身份审批增强与工业级一致性治理架构 (实装落地)</h3>
+          <p class="lead">针对复杂企业人事实践中“员工提报 - 主管审批 - HRBP 协同”的多角色协作链条，系统实装了从前端交互、全局事件总线到后端持久化的<strong>全链路多身份感知与单向终态审批闭环</strong>：</p>
+
+          <div class="grid" style="margin: 16px 0;">
+            <div class="card" style="border-color:#38bdf8; background:#f8fafc;">
+              <h4 style="color:#0284c7;">🎭 5.1 多身份切换与会话上下文隔离 (Persona Switcher)</h4>
+              <ul>
+                <li><strong>开箱即用三角色矩阵</strong>：张明 (P6 基层员工)、李伟 (M1 研发总监/直属主管)、王芳 (P7 资深 HRBP)；</li>
+                <li><strong>会话隔离持久化</strong>：各角色拥有专属的 LocalStorage 会话存储桶（Session Isolation），切换身份时对话历史互不干扰、严格防串扰；</li>
+                <li><strong>请求上下文动态透传</strong>：前端所有 API 请求统一携带 <code>X-Employee-Id</code> 请求头，后端动态装载对应员工 Profile、汇报链与 RBAC 权限。</li>
+              </ul>
+            </div>
+            <div class="card" style="border-color:#10b981; background:#f8fafc;">
+              <h4 style="color:#059669;">🛡️ 5.2 单向终态保障与防重放审计回执 (Single-direction Finality)</h4>
+              <ul>
+                <li><strong>单向终态锁定 (Terminal State)</strong>：审批决策（批准/驳回）不可逆，点击动作瞬间请求加锁，彻底杜绝重复提交与重放并发；</li>
+                <li><strong>操作按钮彻底销毁 (Button Destruction)</strong>：决议下达后，组件立即销毁卸载 Approve / Reject 操作按钮，杜绝按钮复活；</li>
+                <li><strong>不可篡改审计回执 (Audit Receipt)</strong>：原地动态替换为结构化审计凭证，盖有决策时间戳、审批人签字与审核意见，保障企业合规溯源。</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="grid" style="margin: 16px 0;">
+            <div class="card" style="border-color:#a855f7; background:#f8fafc;">
+              <h4 style="color:#7e22ce;">⚡ 5.3 全局事件总线与乐观 UI 同步 (workforce:approvals_updated)</h4>
+              <ul>
+                <li><strong>跨组件统一事件广播</strong>：建立浏览器全局事件总线 <code>workforce:approvals_updated</code>，解耦弹窗、聊天卡片与侧边栏的深层 Prop 传递；</li>
+                <li><strong>多入口即时触发</strong>：无论在待办弹窗点击审批、在聊天流 HITL 卡片确认、还是主管在自然语言中指令代办，均自动广播该事件；</li>
+                <li><strong>乐观计数递减 (Optimistic UI)</strong>：顶部与侧边栏待办徽标计数即时 -1 实现零延时体感，随后静默拉取服务器真值对齐，兼顾流畅与强最终一致性。</li>
+              </ul>
+            </div>
+            <div class="card" style="border-color:#f59e0b; background:#f8fafc;">
+              <h4 style="color:#b45309;">💾 5.4 数据库双写与状态一致性治理 (Dual-Write Consistency)</h4>
+              <ul>
+                <li><strong>修复空待办假回退 Bug</strong>：彻底消除当 PostgreSQL 待办清空为空数组 <code>[]</code> 时被误判为假值而回退到内存旧模拟数据的缺陷；</li>
+                <li><strong>PostgreSQL 18 实体原子落库</strong>：休假审批通过后，原子性更新 <code>approvals</code> 单据状态并原子扣减申请人 <code>leave_balances</code> 假期天数；</li>
+                <li><strong>内存与持久层双写同步</strong>：在 <code>update_approval_status</code> 中实施严格双写机制，保证容器降级或切换环境下数据视图始终绝对对齐。</li>
+              </ul>
+            </div>
+          </div>
+
+          <div style="margin: 20px 0; padding: 18px; border-radius: 18px; background: #0f172a; border: 1px solid #334155;">
+            <h4 style="color:#38bdf8; margin-top:0;">📡 主管审批全生命周期与跨组件事件流转拓扑</h4>
+            <pre style="background:transparent; padding:0; margin:0; font-size:12px; color:#e2e8f0; line-height:1.6;"><code>[Persona 切换: 李伟(主管)] ──► 顶部识别身份 ──► GET /api/approvals/pending ──► 待办徽标点亮 (Badge: N)
+                                                                                  │
+  ┌───────────────────────────────────────────────────────────────────────────────┴─────────────────────────────┐
+  ▼ (入口 A: 待办单据弹窗 PendingApprovalsModal)                                                                ▼ (入口 B: 自然语言对话 / HITL 卡片)
+[点击批准 / 驳回]                                                                                   [输入: "同意张明请假" / 卡片授权]
+  │                                                                                                             │
+  ├─► ① 按钮加锁防重 (Loading State)                                                                            ├─► ① Agent 调用 review_approval_request
+  ├─► ② POST /api/approvals/{id}/action                                                                        ├─► ② 原子扣减申请人假期余额
+  ├─► ③ 彻底销毁操作按钮 (Unmount Buttons)                                                                      ├─► ③ 聊天卡片标记 localStatus 终态
+  ├─► ④ 渲染审计回执 (Audit Receipt: 审批人+时间戳+意见)                                                        │
+  │                                                                                                             │
+  └───────────────────────────────────────┬─────────────────────────────────────────────────────────────────────┘
+                                          ▼
+                      [广播全局事件: dispatchEvent("workforce:approvals_updated")]
+                                          │
+            ┌─────────────────────────────┴─────────────────────────────┐
+            ▼                                                           ▼
+    [App.tsx 全局监听]                                          [所有打开视图感知]
+    • 待办徽标乐观递减 (Optimistic -1)                          • 弹窗与对话卡片自动锁定
+    • 重新拉取 GET /api/approvals/pending 对齐真值              • 彻底杜绝二次点击与状态回退</code></pre>
+          </div>
+
         </section>
 
         <!-- 十二、实施路线图 -->

@@ -149,6 +149,78 @@ class TestRedisCache(unittest.TestCase):
         # 无关的静态政策缓存依然健康保留！
         self.assertIsNotNone(get_cached_response(q_policy, model), "无关政策缓存不应受影响")
 
+    def test_07_cross_employee_private_cache_isolation(self):
+        """
+        核心安全测试：跨角色/跨员工私有数据隔离防串扰
+        - 普通员工张明 (E10293) 提问'帮我查一下我目前的假期余额'并缓存
+        - 切换到主管李伟 (E10001)，提问相同内容，绝对不能取出张明的假期数据！
+        - 主管李伟写入自己的数据后，两人的私有缓存互不影响、精准秒回各自的数据
+        - 验证公共制度依然能跨角色无缝复用
+        """
+        model = "gemini-3.7-flash"
+        q_private = "帮我查一下我目前的假期余额"
+        ans_zhangming = "张明您好，您目前剩余年假为 7 天，带薪病假 5 天。"
+        ans_liwei = "李伟主管您好，您目前剩余年假为 15 天，带薪病假 10 天。"
+
+        # 1. 普通员工张明 (E10293) 提问并存入缓存
+        ok1 = set_cached_response(
+            question=q_private,
+            content=ans_zhangming,
+            model=model,
+            employee_id="E10293",
+            tools_used=["query_leave_balance"],
+        )
+        self.assertTrue(ok1)
+
+        # 验证张明本人查询能够命中自己的私有缓存
+        hit_zhang = get_cached_response(q_private, model=model, employee_id="E10293")
+        self.assertIsNotNone(hit_zhang)
+        self.assertEqual(hit_zhang["content"], ans_zhangming)
+
+        # 2. 切换为主管李伟 (E10001)，输入完全相同的问题
+        # 核心断言：李伟绝不能从 Redis 中取出张明的假期！必须未命中 (None)
+        hit_liwei = get_cached_response(q_private, model=model, employee_id="E10001")
+        self.assertIsNone(hit_liwei, "主管账号绝不能查出普通员工的私有假期缓存！")
+
+        # 3. 主管李伟执行模型推理后，写入李伟自己的私有缓存
+        ok2 = set_cached_response(
+            question=q_private,
+            content=ans_liwei,
+            model=model,
+            employee_id="E10001",
+            tools_used=["query_leave_balance"],
+        )
+        self.assertTrue(ok2)
+
+        # 4. 再次分别以张明和李伟的身份查询，各自命中各自的专属数据
+        hit_zhang_again = get_cached_response(q_private, model=model, employee_id="E10293")
+        self.assertIsNotNone(hit_zhang_again)
+        self.assertEqual(hit_zhang_again["content"], ans_zhangming)
+
+        hit_liwei_again = get_cached_response(q_private, model=model, employee_id="E10001")
+        self.assertIsNotNone(hit_liwei_again)
+        self.assertEqual(hit_liwei_again["content"], ans_liwei)
+
+        # 5. 验证公共制度在跨员工场景下的正常共享
+        q_public = "公司的年假政策是如何规定的？"
+        ans_policy = "全员每年享受基本年假5-15天，按司龄累进。"
+        set_cached_response(
+            question=q_public,
+            content=ans_policy,
+            model=model,
+            employee_id="E10293",
+            tools_used=["search_policy"],
+        )
+        # 张明和李伟均能命中同一份公共制度缓存
+        self.assertEqual(get_cached_response(q_public, model=model, employee_id="E10293")["content"], ans_policy)
+        self.assertEqual(get_cached_response(q_public, model=model, employee_id="E10001")["content"], ans_policy)
+
+        # 6. 定向写淘汰：张明提交请假单，只淘汰张明的假期私有缓存，李伟的假期私有缓存依然健康
+        deleted = invalidate_cache_on_write("submit_leave_request", employee_id="E10293")
+        self.assertGreaterEqual(deleted, 1)
+        self.assertIsNone(get_cached_response(q_private, model=model, employee_id="E10293"))
+        self.assertIsNotNone(get_cached_response(q_private, model=model, employee_id="E10001"), "李伟的缓存不应受张明请假影响")
+
 
 if __name__ == "__main__":
     unittest.main()

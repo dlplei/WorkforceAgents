@@ -54,6 +54,47 @@ WRITE_ACTION_INVALIDATION_MAP = {
 }
 
 
+# 个人私有意图指示词（提问中含第一人称与个人业务组合，属于私有缓存）
+PERSONAL_PRONOUNS = ["我", "我的", "本人", "自己", "咱"]
+PERSONAL_TOPICS = [
+    "假期", "年假", "调休", "病假", "事假", "余额", "工号", 
+    "审批", "工单", "证明", "档案", "薪资", "考勤", "工资", "报销", "日程", "我的"
+]
+
+
+def is_personal_request(
+    question: str,
+    tools_used: Optional[List[str]] = None,
+    tool_calls: Optional[List[Dict[str, Any]]] = None,
+) -> bool:
+    """
+    判断该请求/回复是否属于特定员工个人的私有数据。
+    若属于私有数据，必须隔离到 workforce:cache:qa:user:{employee_id}:{hash}
+    若属于公共政策，放入 workforce:cache:qa:global:{hash}
+    """
+    # 1. 如果调用了个人私有业务工具，绝对是私有数据
+    if tools_used:
+        used_set = set(tools_used)
+        if used_set & (DYNAMIC_QUERY_TOOLS | DOCUMENT_GEN_TOOLS):
+            return True
+
+    # 2. 检查 tool_calls
+    if tool_calls:
+        for tc in tool_calls:
+            tname = tc.get("name", "")
+            if tname in DYNAMIC_QUERY_TOOLS or tname in DOCUMENT_GEN_TOOLS:
+                return True
+
+    # 3. 语义与意图判断：提问包含第一人称代词（我/我的/本人）并且涉及个人实体（假期/余额/审批/证明等）
+    norm_q = question.lower()
+    has_pronoun = any(p in norm_q for p in PERSONAL_PRONOUNS)
+    has_topic = any(t in norm_q for t in PERSONAL_TOPICS)
+    if has_pronoun and has_topic:
+        return True
+
+    return False
+
+
 def calculate_ttl(tools_used: Optional[List[str]] = None) -> int:
     """
     根据工具调用意图动态计算缓存 TTL（分级策略）:
@@ -125,57 +166,136 @@ def normalize_question(question: str) -> str:
     return q
 
 
-def generate_cache_key(question: str, model: str = "") -> str:
-    """生成统一规范的 Redis Cache Key"""
+def get_effective_employee_id(employee_id: Optional[str] = None) -> str:
+    """获取当前生效的员工工号，默认张明 (E10293)"""
+    if employee_id and str(employee_id).strip():
+        return str(employee_id).strip()
+    try:
+        from db.database import get_current_employee_id
+        cur = get_current_employee_id()
+        if cur and str(cur).strip():
+            return str(cur).strip()
+    except Exception:
+        pass
+    return "E10293"
+
+
+def generate_cache_key(
+    question: str,
+    model: str = "",
+    employee_id: Optional[str] = None,
+    is_personal: bool = False,
+) -> str:
+    """
+    生成统一规范的 Redis Cache Key：
+    - 私有数据：workforce:cache:qa:user:{employee_id}:{q_hash}
+    - 公共政策：workforce:cache:qa:global:{q_hash}
+    """
     norm_q = normalize_question(question)
     raw = f"{norm_q}::{model}"
     q_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
-    return f"workforce:cache:qa:{q_hash}"
+
+    if is_personal:
+        emp_id = get_effective_employee_id(employee_id)
+        return f"workforce:cache:qa:user:{emp_id}:{q_hash}"
+    else:
+        return f"workforce:cache:qa:global:{q_hash}"
 
 
-def get_cached_response(question: str, model: str = "") -> Optional[Dict[str, Any]]:
+def get_cached_response(
+    question: str,
+    model: str = "",
+    employee_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """
-    查询问题缓存
-    如果命中返回包含 content、cached_at 等信息的字典，未命中返回 None
+    查询问题缓存（企业级两级多租户隔离与安全防御）：
+    1. 优先探测当前登录员工专属私有缓存：workforce:cache:qa:user:{employee_id}:{hash}；
+    2. 若私有未命中，且当前提问不属于个人隐私意图，再探测公共制度缓存：workforce:cache:qa:global:{hash}；
+    3. 严禁将包含个人数据的缓存跨工号返回给其他员工或主管！
     """
     client = get_redis_client()
     if client is None:
         return None
 
-    key = generate_cache_key(question, model)
-    try:
-        data_str = client.get(key)
-        if not data_str:
-            return None
+    norm_q = normalize_question(question)
+    raw = f"{norm_q}::{model}"
+    q_hash = hashlib.sha256(raw.encode('utf-8')).hexdigest()[:16]
+    is_personal_intent = is_personal_request(question)
+    emp_id = get_effective_employee_id(employee_id)
 
-        data = json.loads(data_str)
-        # 增加命中计数
-        client.hincrby("workforce:cache:metrics", "hit_count", 1)
-        logger.info(f"⚡ Redis 缓存命中! [Key: {key}] 问题: '{question[:40]}...'")
-        return data
+    # 1. 优先检查当前用户的私有缓存
+    user_key = f"workforce:cache:qa:user:{emp_id}:{q_hash}"
+    try:
+        data_str = client.get(user_key)
+        if data_str:
+            data = json.loads(data_str)
+            client.hincrby("workforce:cache:metrics", "hit_count", 1)
+            logger.info(f"⚡ Redis [私有缓存命中] [Key: {user_key}, Employee: {emp_id}] 问题: '{question[:40]}...'")
+            return data
     except Exception as e:
-        logger.warning(f"读取 Redis 缓存异常: {e}")
+        logger.warning(f"读取私有 Redis 缓存异常: {e}")
+
+    # 2. 如果是个人私有提问（如“查我目前的假期余额”），未命中自己私有缓存时，绝对不能读公共库或其他人的数据！
+    if is_personal_intent:
+        logger.info(f"🔒 提问包含个人私有诉求 '{question[:30]}...'，员工 {emp_id} 未建立私有缓存，绕过公共缓存直通模型")
         return None
+
+    # 3. 检查全局共享公共缓存 (如公司的年假政策、差旅标准等)
+    global_key = f"workforce:cache:qa:global:{q_hash}"
+    try:
+        data_str = client.get(global_key)
+        if data_str:
+            data = json.loads(data_str)
+            # 安全门禁防御：校验公共键是否被误存入私有数据
+            if data.get("is_private", False) or is_personal_request(question, data.get("tools_used")):
+                logger.warning(f"⚠️ 公共缓存键 {global_key} 包含私有数据特征，拒绝跨账号下发，主动淘汰")
+                client.delete(global_key)
+                return None
+            client.hincrby("workforce:cache:metrics", "hit_count", 1)
+            logger.info(f"⚡ Redis [公共缓存命中] [Key: {global_key}] 问题: '{question[:40]}...'")
+            return data
+    except Exception as e:
+        logger.warning(f"读取公共 Redis 缓存异常: {e}")
+
+    # 4. 兼容旧版本旧键 workforce:cache:qa:{q_hash} (如果是纯公共政策)
+    old_key = f"workforce:cache:qa:{q_hash}"
+    try:
+        data_str = client.get(old_key)
+        if data_str:
+            data = json.loads(data_str)
+            if not is_personal_request(question, data.get("tools_used")):
+                client.hincrby("workforce:cache:metrics", "hit_count", 1)
+                logger.info(f"⚡ Redis [兼容公共缓存命中] [Key: {old_key}] 问题: '{question[:40]}...'")
+                return data
+            else:
+                logger.warning(f"🧹 检测到旧版非隔离私有缓存: {old_key}，立即安全销毁")
+                client.delete(old_key)
+    except Exception:
+        pass
+
+    return None
 
 
 def set_cached_response(
     question: str,
     content: str,
     model: str = "",
+    employee_id: Optional[str] = None,
     tools_used: Optional[List[str]] = None,
     tool_calls: Optional[List[Dict[str, Any]]] = None,
     tool_results: Optional[List[Dict[str, Any]]] = None,
     ttl: Optional[int] = None,
 ) -> bool:
     """
-    将 AI 回复内容存入 Redis 缓存
+    将 AI 回复内容存入 Redis 缓存（多租户/身份严格隔离）:
     :param question: 原始用户提问
     :param content: AI 生成的完整文本内容
     :param model: 所用模型标识
+    :param employee_id: 当前发起提问的员工工号 (如 E10293, E10001)
     :param tools_used: 过程中调用的工具名列表
     :param tool_calls: 过程中捕获的工具调用详情
     :param tool_results: 过程中捕获的工具执行结果详情
-    :param ttl: 过期时间（秒），默认取配置项
+    :param ttl: 过期时间（秒），默认按分级策略计算
     """
     if not content or not content.strip():
         return False
@@ -184,14 +304,24 @@ def set_cached_response(
     if client is None:
         return False
 
-    cfg = get_redis_config()
+    # 判定是否属于员工个人私有数据（根据工具调用与自然语言语义识别）
+    is_personal = is_personal_request(question, tools_used=tools_used, tool_calls=tool_calls)
     expire_seconds = ttl if ttl is not None else calculate_ttl(tools_used)
-    key = generate_cache_key(question, model)
+
+    # 生成安全隔离 Key
+    key = generate_cache_key(
+        question=question,
+        model=model,
+        employee_id=employee_id,
+        is_personal=is_personal,
+    )
 
     payload = {
         "question": question,
         "content": content,
         "model": model,
+        "employee_id": employee_id if is_personal else None,
+        "is_private": is_personal,
         "tools_used": tools_used or [],
         "tool_calls": tool_calls or [],
         "tool_results": tool_results or [],
@@ -202,7 +332,8 @@ def set_cached_response(
     try:
         client.set(key, json.dumps(payload, ensure_ascii=False, default=str), ex=expire_seconds)
         client.hincrby("workforce:cache:metrics", "set_count", 1)
-        logger.info(f"💾 AI 回复已成功写入 Redis 缓存 [Key: {key}, TTL: {expire_seconds}s]")
+        tag = f"私有缓存 [Employee: {employee_id}]" if is_personal else "公共缓存 [Global]"
+        logger.info(f"💾 AI 回复已成功写入 Redis {tag} [Key: {key}, TTL: {expire_seconds}s]")
         return True
     except Exception as e:
         logger.warning(f"写入 Redis 缓存异常: {e}")
@@ -260,11 +391,12 @@ def get_cache_stats() -> Dict[str, Any]:
         return {"connected": False, "error": str(e)}
 
 
-def invalidate_cache_on_write(tool_name: str) -> int:
+def invalidate_cache_on_write(tool_name: str, employee_id: Optional[str] = None) -> int:
     """
     写操作主动失效联动（Evict-on-Write）:
     当触发数据写操作（如请假申请、工单创建）时，主动淘汰相关联的动态查询缓存，
     避免 DB 更新后前端仍读出陈旧数据。
+    支持传入 employee_id 进行细粒度定向淘汰。
     """
     rule = WRITE_ACTION_INVALIDATION_MAP.get(tool_name)
     if not rule:
@@ -291,6 +423,11 @@ def invalidate_cache_on_write(tool_name: str) -> int:
 
             used_tools = set(data.get("tools_used", []))
             question = data.get("question", "").lower()
+            rec_emp_id = data.get("employee_id")
+
+            # 如果指定了 employee_id，且该缓存是其他人的私有缓存，则不误删
+            if employee_id and rec_emp_id and rec_emp_id != employee_id:
+                continue
 
             # 命中了关联的查询工具，或者提问包含关联写操作的关键词
             is_match = bool(used_tools & target_tools) or any(kw.lower() in question for kw in target_keywords)

@@ -674,11 +674,11 @@
             </div>
             <div class="card">
               <h4>🧪 5. 工程化落地与自动化测试验证</h4>
-              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>11/11 单元测试与接口测试全部 PASS</strong></p>
+              <p style="font-size:13px; color:var(--muted); margin-top:-4px;"><strong>13/13 单元测试与接口测试全部 PASS</strong></p>
               <ul>
-                <li><code>backend/services/cache_service.py</code>：提供 <code>get_cached_response</code>、<code>set_cached_response</code>、<code>calculate_ttl</code>、<code>invalidate_cache_on_write</code>、<code>clear_cache</code>；</li>
-                <li><code>backend/test_redis_cache.py</code>：覆盖 DB 隔离、标点归一化、分级 TTL 策略、写时淘汰断言；</li>
-                <li><code>backend/test_api_cache.py</code>：覆盖 SSE 流式秒回、多轮历史回放、<code>force_refresh</code> 强刷直通模型、清空接口端点测试。</li>
+                <li><code>backend/services/cache_service.py</code>：提供 <code>get_cached_response</code>、<code>set_cached_response</code>、<code>calculate_ttl</code>、<code>invalidate_cache_on_write</code>、<code>clear_cache</code>，内置两级多租户私有缓存与公共政策缓存隔离；</li>
+                <li><code>backend/test_redis_cache.py</code>：覆盖 DB 隔离、标点归一化、分级 TTL 策略、写时淘汰断言，以及<strong>跨员工/主管私有假期缓存绝对隔离断言</strong>；</li>
+                <li><code>backend/test_api_cache.py</code>：覆盖 SSE 流式秒回、多轮历史回放、<code>force_refresh</code> 强刷直通模型、清空端点及 <code>X-Employee-Id</code> 多租户 API 隔离测试。</li>
               </ul>
             </div>
           </div>

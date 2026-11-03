@@ -157,6 +157,36 @@ class TestFastAPICacheIntegration(unittest.TestCase):
         # 验证清空后不再命中
         self.assertIsNone(get_cached_response("测试问题"))
 
+    def test_chat_cross_employee_header_isolation(self):
+        """测试通过 X-Employee-Id 请求头在 POST /api/chat 时的多租户隔离"""
+        question = "帮我查一下我目前的假期余额"
+        content_zhang = "张明您好，您目前剩余年假 7 天。"
+
+        # 为张明 (E10293) 预置专属私有缓存
+        set_cached_response(
+            question=question,
+            content=content_zhang,
+            model="gemini-3.7-flash",
+            employee_id="E10293",
+            tools_used=["query_leave_balance"],
+        )
+
+        # 1. 张明请求：必须 HIT
+        res_zhang = self.client.post(
+            "/api/chat",
+            headers={"X-Employee-Id": "E10293"},
+            json={"message": question},
+        )
+        self.assertEqual(res_zhang.status_code, 200)
+        self.assertEqual(res_zhang.headers.get("x-cache"), "HIT")
+        self.assertIn("张明您好", res_zhang.text)
+
+        # 2. 主管李伟 (E10001) 请求相同问题：绝不能 HIT 张明的缓存！
+        # 此时李伟尚未缓存自己的数据，系统安全门禁拦截公共/跨用户命中，直通后端模型 (非 HIT)
+        # 为避免实际调用外部 LLM 耗时，我们可以验证缓存服务层查询返回 None
+        hit_manager = get_cached_response(question, model="gemini-3.7-flash", employee_id="E10001")
+        self.assertIsNone(hit_manager, "主管李伟查询个人假期时，绝不能命中普通员工张明的私有缓存！")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ from datetime import date, datetime
 import logging
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from config import LLMConfig, update_config, get_config
 from agent.engine import AgentEngine
 from agent.tools import registry
-from db.database import get_current_employee, set_current_employee_id, get_all_employees, init_db
+from db.database import get_current_employee, get_current_employee_id, set_current_employee_id, get_all_employees, init_db
 from models import ApprovalActionRequest, ApprovalActionResponse
 from services.hr_adapter import get_hr_adapter
 from services.cache_service import (
@@ -118,6 +118,7 @@ class ChatRequest(BaseModel):
     config: Optional[LLMConfig] = None
     force_refresh: Optional[bool] = False  # 强制跳过缓存重新生成，并在完成时覆写缓存
     hitl_confirmed: Optional[Dict[str, Any]] = None  # 原生 HITL 授权执行载荷
+    employee_id: Optional[str] = None  # 发起请求的员工工号，用于多租户与私有数据缓存隔离
 
 
 class HitlDecisionRequest(BaseModel):
@@ -435,7 +436,10 @@ async def clear_cache_endpoint():
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest):
+async def chat(
+    req: ChatRequest,
+    x_employee_id: Optional[str] = Header(None, alias="X-Employee-Id"),
+):
     """
     聊天接口（流式 SSE）
     
@@ -449,7 +453,11 @@ async def chat(req: ChatRequest):
     - status: 状态变化
     - node_enter/exit: 节点进入/退出
     """
-    logger.info(f"💬 收到聊天请求: {req.message[:100]}...")
+    # 动态确定当前操作员工工号（优先级：req.employee_id > Header X-Employee-Id > ContextVar > 默认张明）
+    current_emp_id = (req.employee_id or x_employee_id or get_current_employee_id() or "E10293").strip()
+    set_current_employee_id(current_emp_id)
+
+    logger.info(f"💬 收到聊天请求 [员工: {current_emp_id}]: {req.message[:100]}...")
     
     # 更新配置（如果请求中提供了）
     if req.config:
@@ -468,12 +476,12 @@ async def chat(req: ChatRequest):
     cfg = get_config()
     current_model = (req.config.model if req.config and req.config.model else None) or cfg.model
 
-    # 尝试命中 Redis 问答缓存（若启用 force_refresh 或包含 HITL 确认执行载荷则直接绕过）
+    # 尝试命中 Redis 问答缓存（若启用 force_refresh 或包含 HITL 确认执行载荷则直接绕过；严格隔离个人私有数据）
     if req.force_refresh or req.hitl_confirmed:
         logger.info(f"🔄 [跳过缓存] force_refresh={req.force_refresh}, hitl_confirmed={bool(req.hitl_confirmed)}: '{req.message[:50]}'")
         cached_item = None
     else:
-        cached_item = get_cached_response(req.message, model=current_model)
+        cached_item = get_cached_response(req.message, model=current_model, employee_id=current_emp_id)
 
     if cached_item:
         cached_text = cached_item.get("content", "")
@@ -552,8 +560,8 @@ async def chat(req: ChatRequest):
                     captured_tool_results.append(tool_res_data)
                     t_name = tool_res_data.get("tool_name", "")
                     if t_name and tool_res_data.get("success", True):
-                        # Evict-on-Write: 业务写操作成功时主动淘汰相关关联动态缓存
-                        evicted = invalidate_cache_on_write(t_name)
+                        # Evict-on-Write: 业务写操作成功时主动淘汰相关关联动态缓存（支持工号定向淘汰）
+                        evicted = invalidate_cache_on_write(t_name, employee_id=current_emp_id)
                         if evicted > 0:
                             logger.info(f"🧹 [Evict-on-Write] 写操作 '{t_name}' 成功执行，已联动淘汰 {evicted} 条陈旧缓存")
                 elif ev_type == "hitl_request":
@@ -565,12 +573,13 @@ async def chat(req: ChatRequest):
                 # 格式化为 SSE (使用 safe_dumps 防御 Decimal 及日期类型导致的序列化崩溃)
                 yield f"data: {safe_dumps(event)}\n\n"
 
-            # 正常完成且非 HITL 门禁挂起卡片状态时，将结果缓存入 Redis
+            # 正常完成且非 HITL 门禁挂起卡片状态时，将结果缓存入 Redis（注入工号实现多租户私有数据隔离）
             if full_content and not has_hitl_request and not req.hitl_confirmed:
                 set_cached_response(
                     question=req.message,
                     content=full_content,
                     model=current_model,
+                    employee_id=current_emp_id,
                     tools_used=tools_called,
                     tool_calls=captured_tool_calls,
                     tool_results=captured_tool_results,

@@ -258,7 +258,7 @@ export default function InteractiveGraphSvg({
               ${36 * scale} ${nodePositions.__end__.y + 13 * scale},
               ${nodePositions.__end__.x} ${nodePositions.__end__.y + 13 * scale}`}
         fill="none"
-        stroke={isNodeActive('__end__') || (!isRunning && Boolean(nodeVisitCounts['reasoning'])) ? '#34d399' : '#475569'}
+        stroke={isNodeActive('__end__') || (!isRunning && Boolean(nodeVisitCounts['reasoning']) && activeNode !== 'hitl_gate') ? '#34d399' : '#475569'}
         strokeWidth={isNodeActive('__end__') ? '2.5' : '1.5'}
         strokeDasharray="4 3"
         markerEnd="url(#arrow-emerald)"

@@ -221,14 +221,23 @@ export default function ChatInterface({
         break;
       }
       case 'node_exit': {
+        const exitNode = event.content;
         setActiveNode('');
-        setTraceSteps((prev) =>
-          prev.map((s, idx) =>
-            idx === prev.length - 1 && s.status === 'running'
+        setTraceSteps((prev) => {
+          let targetIdx = -1;
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].node === exitNode && prev[i].status === 'running') {
+              targetIdx = i;
+              break;
+            }
+          }
+          if (targetIdx === -1) return prev;
+          return prev.map((s, idx) =>
+            idx === targetIdx
               ? { ...s, status: 'completed', duration: Math.max(10, Date.now() - s.timestamp) }
               : s
-          )
-        );
+          );
+        });
         break;
       }
       case 'tool_call': {
@@ -338,8 +347,8 @@ export default function ChatInterface({
 
         toolCallsRef.current = [];
         toolResultsRef.current = [];
-        hitlRequestRef.current = null;
-
+        // 保留 hitlRequestRef.current，不要在 message_complete 中提前清空，
+        // 以便 status: idle 与 finally 能够将 activeNode 锁定为 hitl_gate（挂起等待员工确认）
         break;
       }
       case 'error':

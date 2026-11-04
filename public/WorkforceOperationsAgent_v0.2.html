@@ -391,9 +391,12 @@
               <tr><td>Document Generation Tool</td><td>生成申请材料、证明、审批说明和摘要</td><td>审批准备、证明开具</td></tr>
               <tr><td>Transfer API</td><td>发起调动流程、查询调动状态</td><td>员工调动</td></tr>
               <tr><td>Compensation Calculator</td><td>计算薪酬变动、社保公积金影响</td><td>调动评估</td></tr>
-            </tbody>
               <tr><td>query_pending_approvals</td><td>查询当前主管或审批人名下的待办单据列表（休假/差旅）</td><td>主管查询待办、待办计数更新</td></tr>
               <tr><td>review_approval_request</td><td>主管审批决策（同意/驳回），写入审批意见并原子扣减假期</td><td>主管自然语言审批或一键批复</td></tr>
+              <tr><td>generate_document (实装)</td><td>生成在职/收入证明，执行在途单据防重与 POL-005 30天冷静期拦截</td><td>证明开具、业务防重治理</td></tr>
+              <tr><td>query_documents (/api/documents)</td><td>多维度查询员工名下已提交人事证明申请记录与办理进度</td><td>证明记录追踪、防重核验</td></tr>
+              <tr><td>chat_history (/api/chat/history)</td><td>持久化会话消息流式存储与拉取历史对话上下文</td><td>会话追溯、跨端多轮上下文维持</td></tr>
+            </tbody>
 
           </table>
         </section>
@@ -566,10 +569,10 @@
               <p><strong>生命周期：</strong>动态分级 (10m / 1h / 24h) / 会话期间 / 写时主动淘汰</p>
             </div>
             <div class="card">
-              <h4>🟣 情景记忆 (Episodic Memory)</h4>
-              <p>历史交互记录，支持检索。</p>
-              <p><strong>技术：</strong>Vector DB + PostgreSQL</p>
-              <p><strong>生命周期：</strong>永久（可定期清理）</p>
+              <h4>🟣 情景记忆与消息/单据持久化 (Episodic Memory & Persistence)</h4>
+              <p>全量会话流消息持久化（<code>chat_messages</code> 表）与正式人事证明申请全周期留痕（<code>documents</code> 表）。</p>
+              <p><strong>技术：</strong>PostgreSQL 18 + 双轨内存字典容灾 + REST API 查阅</p>
+              <p><strong>生命周期：</strong>会话消息永久留痕 / 证明在途追踪 / POL-005 30天冷静期溯源</p>
             </div>
             <div class="card">
               <h4>🔷 语义记忆 (Semantic Memory)</h4>
@@ -1133,6 +1136,34 @@
             </div>
           </div>
 
+          <div class="grid" style="margin: 16px 0;">
+            <div class="card" style="border-color:#10b981; background:#f0fdf4;">
+              <h4 style="color:#047857;">🛡️ 5.7 业务级在途单据防重治理 (In-flight Duplicate Prevention)</h4>
+              <ul>
+                <li><strong>在途未结案主动防御</strong>：员工针对同一类型与相似用途的人事证明（在职/收入证明）若有名下处于 <code>processing</code> 或 <code>pending</code> 的在途单据，系统执行底层硬拦截；</li>
+                <li><strong>透出单号与办结时限</strong>：拦截时明确下发已有单号（如 <code>DOC-1730700000</code>）、申请日期及 1-2 工作日办理时效，消除员工因等待而反复提交的焦虑；</li>
+                <li><strong>双层拦截保障</strong>：无论直接调用 <code>generate_document</code> 还是流转图执行，均由数据层 <code>check_duplicate_document</code> 集中把关。</li>
+              </ul>
+            </div>
+            <div class="card" style="border-color:#e11d48; background:#fff1f2;">
+              <h4 style="color:#be123c;">⚖️ 5.8 规章政策 30 天冷静期刚性拦截 (POL-005 Cooldown)</h4>
+              <ul>
+                <li><strong>刚性对齐公司治理规章</strong>：依据《POL-005 证明开具管理规定》第三条，同一用途证明开具办结后，30 天内不得无故重复开具；</li>
+                <li><strong>多用途精准判别</strong>：智能比对申请用途语义，区分出国签证、银行房贷、子女入学等多维用途，不同用途放行，相同用途严格合规拦截；</li>
+                <li><strong>紧急情况转人工工单</strong>：若因使馆拒签重递或材料遗失等特殊情况，拦截指引自动引导提报 HR 服务工单由专员人工复核办理。</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="card" style="border-color:#3b82f6; background:#eff6ff; margin: 16px 0;">
+            <h4 style="color:#1d4ed8;">🚦 5.9 原生 HITL Gate 前置门禁自省 (Pre-Gate Clean UX)</h4>
+            <ul>
+              <li><strong>防重决策前移</strong>：在 LangGraph 状态图触发人机协同门禁前先行核验防重规则，<strong>坚决不向下游派发无效/冲突的确认卡片</strong>；</li>
+              <li><strong>消除多余交互噪声</strong>：拦截结果直接作为上下文结构化回流推理节点，由 Agent 自然语言答复在途说明，避免员工界面充斥无效草案；</li>
+              <li><strong>Prompt 在途交互协同原则</strong>：工作原则新增第 10 条，若界面已有待确认草案卡片，主动指引员工直接点击卡片上的【确认提交执行】。</li>
+            </ul>
+          </div>
+
           <div style="margin: 20px 0; padding: 18px; border-radius: 18px; background: #0f172a; border: 1px solid #334155;">
             <h4 style="color:#38bdf8; margin-top:0;">📡 主管审批全生命周期与跨组件事件流转拓扑</h4>
             <pre style="background:transparent; padding:0; margin:0; font-size:12px; color:#e2e8f0; line-height:1.6;"><code>[Persona 切换: 李伟(主管)] ──► 顶部识别身份 ──► GET /api/approvals/pending ──► 待办徽标点亮 (Badge: N)
@@ -1183,10 +1214,10 @@
               <p><strong>目标：</strong>从问答升级到流程推进，覆盖核心业务场景。</p>
               <ul>
                 <li>差旅申请全流程</li>
-                <li>证明开具 + 员工信息变更</li>
+                <li>证明开具 + 员工信息变更 + 在途防重与 POL-005 冷静期校验 (已实装)</li>
                 <li>入职/离职服务引导</li>
                 <li>转岗/调动流程准备</li>
-                <li>完善 Memory 系统 + HITL 机制</li>
+                <li>完善 Memory 系统 + 会话/证明持久化 + 原生 HITL 前置门禁 (已实装)</li>
                 <li>接入 HRIS 系统 (Workday)</li>
               </ul>
               <p><span class="kpi-badge">任务完成率 &gt; 80%</span>

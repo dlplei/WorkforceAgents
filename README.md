@@ -33,7 +33,7 @@
 │                 │         │  - astream_events(v2) 全双工事件翻译与 SSE 状态推送                    │
 │                 │         │  - Tool Registry (9大 HR 运维工具，只读/确认级分级管控)                 │
 │                 │         │  - RAG 向量知识库 (ChromaDB + Ollama BGE-M3 / 本地降级)                │
-│                 │         │  - PostgreSQL 18 持久化存储 (员工/假期/日程/工单)                     │
+│                 │         │  - PostgreSQL 18 持久化存储 (员工/假期/日程/工单/人事证明/会话消息)                 │
 └─────────────────┘         └───────────────────────────────────┬────────────────────────────────────┘
                                                                 │
                                                                 ▼
@@ -239,6 +239,9 @@ npm run build
 - ✅ **全局事件总线与跨组件乐观同步 (`workforce:approvals_updated`)**: 统一浏览器级事件总线，Modal 审批、聊天卡片决策、Agent 工具代办多端协同，配合乐观计数递减实现 0 延迟极速反馈
 - ✅ **数据库双写与状态一致性保障**: 消除 PostgreSQL 待办清空误回退假数据 Bug，实体表持久化与内存列表双写原子同步，审批通过联动原子核减申请人假期余额
 - ✅ **全链路生产级可观测性与监控体系 (Prometheus + Grafana)**: 基于 `prometheus-fastapi-instrumentator` 与 `prometheus-client`，全面监控 HTTP QPS/延迟、LLM Token 吞吐（Input/Output）、Redis 缓存命中率（Hit/Miss/Evict）、Guardrail 拦截原因分布、HITL 门禁行为及图节点执行耗时，并预置开箱即用的 Grafana 仪表板
+- ✅ **人事证明在途防重与 POL-005 冷静期拦截引擎 (In-flight Duplicate & Cooldown Engine)**: 双层防重核验机制：1) 在途申请拦截（处理中或待办状态单据提示在途单号，避免重复提交）；2) 公司政策《POL-005 证明开具管理规定》30 天防重冷静期刚性校验（30 天内相同用途自动拦截并提供 HR 工单申诉分流通道，不同用途允许正常开具）
+- ✅ **HITL Gate 前置防重门禁 (Pre-Gate Interception)**: 在 LangGraph 工作流触发人机协同前实施前置轻量自省；命中在途重复或冷静期违规时，**坚决不向下游派发无效的待确认卡片**，而是直接由 Agent 明确答复在途单号与办结时限，保障用户交互体验纯净
+- ✅ **全流程人事证明与全量会话持久化 (documents & chat_messages Dual-Track Persistence)**: 扩展 PostgreSQL 实体数据表（`documents` 与 `chat_messages`），双轨内存字典保底容灾；聊天请求与 SSE 回复流双向原子落库，支持 `/api/documents` 进度追踪与 `/api/chat/history` 历史会话还原
 
 
 ## 生产级全链路可观测性与监控体系 (Prometheus + Grafana)
@@ -651,6 +654,73 @@ podman compose up -d prometheus grafana
 }
 ```
 
+### GET /api/documents
+
+查询员工名下已提交的人事证明（在职证明、收入证明等）申请记录
+
+**查询参数**:
+- `employee_id` (可选): 员工工号，缺省时自动读取请求头 `X-Employee-Id`
+- `status` (可选): 单据状态（`processing`, `completed`, `rejected`）
+- `doc_type` (可选): 证明类型（`在职证明`, `收入证明`, `离职证明` 等）
+
+**响应**:
+```json
+{
+  "success": true,
+  "count": 1,
+  "documents": [
+    {
+      "id": "DOC-1730700000",
+      "employee_id": "E10293",
+      "applicant": "张明",
+      "doc_type": "在职证明",
+      "purpose": "办理申根签证",
+      "language": "中文",
+      "status": "processing",
+      "created_at": "2026-11-04 15:00:00",
+      "completed_at": null,
+      "metadata": { "reason": "出国旅游" }
+    }
+  ]
+}
+```
+
+### GET /api/chat/history
+
+拉取已持久化的会话流消息列表（支持历史对话追溯与会话断点续接）
+
+**查询参数**:
+- `session_id` (可选): 会话 ID 标识
+- `limit` (可选): 返回的最大消息条数（默认 50 条）
+
+**响应**:
+```json
+{
+  "success": true,
+  "count": 2,
+  "messages": [
+    {
+      "id": "msg-1730700000-abc123",
+      "session_id": "sess-default",
+      "employee_id": "E10293",
+      "role": "user",
+      "content": "我需要开具一份用于办理签证的在职证明",
+      "created_at": "2026-11-04 15:00:00",
+      "metadata": { "source": "chat_input" }
+    },
+    {
+      "id": "msg-1730700002-def456",
+      "session_id": "sess-default",
+      "employee_id": "E10293",
+      "role": "assistant",
+      "content": "已为您整理好申请草稿，请在下方卡片中核对详细信息并点击确认提交。",
+      "created_at": "2026-11-04 15:00:02",
+      "metadata": { "tools_called": ["generate_document"], "has_hitl_request": true }
+    }
+  ]
+}
+```
+
 
 
 ## 测试场景
@@ -688,6 +758,13 @@ podman compose up -d prometheus grafana
   - *预期表现*：操作按钮立即呈现 Loading 加锁并彻底卸载销毁，原地替换为【已批准】审计回执（含审批人李伟、时间戳与意见），徽标计数瞬时乐观递减并广播 `workforce:approvals_updated`；
 - **自然语言对话流审批与假期原子扣减**: 作为李伟在对话框输入：`"同意张明的年假申请，注意交接进度"`
   - *预期表现*：Agent 识别主管身份并调用 `review_approval_request`，执行审批决议；随后切换回张明身份，查得张明年假余额原子扣减 2 天（由 7 天变为 5 天）。
+
+### 5. 业务级防重拦截与 POL-005 冷静期自动化测试 (Duplicate Prevention & Persistence)
+- **执行测试套件**: `python -m pytest backend/test_duplicate_and_chat_history.py`
+  - *用例 1 (会话持久化与 API)*：自动记录用户提问与 Agent 回答，通过 `/api/chat/history` 查询返回 100% 完整对话序列；
+  - *用例 2 (人事证明记录与 API)*：调用 `create_document` 落库并在 `/api/documents` 实时查阅单据状态；
+  - *用例 3 (在途单据防重拦截)*：当员工已有处于 `processing` 或 `pending` 状态的相同证明时，Agent 工具层与 HITL Gate 自动短路拦截，输出在途单号并提醒员工无需重复提交；
+  - *用例 4 (POL-005 政策 30 天冷静期校验)*：30 天内相同用途的办结证明自动依据政策条款拦截，并提示工单人工申诉通道；不同用途证明则放行正常开具。
 
 
 ## 日志与调试
@@ -727,8 +804,10 @@ logging.basicConfig(
 - [x] **Agent 架构升级为 LangGraph**: 使用 StateGraph 状态机重构编排引擎，支持细粒度事件生命周期监控
 - [x] **向量检索与 RAG 强化**: 接入 ChromaDB 向量数据库与 Ollama BGE-M3 (1024维密集语义嵌入)，支持本地容灾降级
 - [x] **数据持久化**: 接入 PostgreSQL 18-alpine 持久化员工、假期、日程、工单与审批数据
+- [x] **全流程人事证明与会话流持久化**: `documents` 申请表与 `chat_messages` 对话消息表，双轨内存字典保底容灾
 - [x] **企业级 HRIS 适配器**: 实现可插拔 `IHRServiceAdapter` 架构，支持对接企业 ServiceNow PDI 实例并本地双写缓存
-- [ ] 添加 Prometheus + Grafana 指标监控与遥测追踪
+- [x] **业务级防重与政策冷静期机制**: POL-005《证明开具规定》30 天防重核验与在途单据拦截，HITL 门禁前置自省
+- [x] **Prometheus + Grafana 全链路指标监控**: 覆盖 API 中间件、大模型 Token、Redis 缓存、安全护栏与 HITL 决策可视化监控面板
 
 ### Phase 2 (多 Agent 与企业生态扩展)
 - [ ] **多 Agent Supervisor 协作**: 直接利用 LangGraph Subgraph 特性，将当前 Workforce Graph 作为子图挂载至主管 Agent 下，扩展差旅专家 Agent、IT 运维 Agent

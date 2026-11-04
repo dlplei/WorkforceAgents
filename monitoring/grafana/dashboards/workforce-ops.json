@@ -12,10 +12,11 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "type": "stat",
       "title": "Total LLM Tokens",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum(workforce_llm_tokens_total)", "legendFormat": "Tokens" }
+        { "expr": "sum(workforce_llm_tokens_total) or vector(0)", "legendFormat": "Tokens" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "short" } },
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -28,10 +29,11 @@
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "type": "stat",
       "title": "Redis Cache Hits / Total",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum(workforce_redis_cache_events_total{event=\"hit\"}) or vector(0)", "legendFormat": "Hits" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "short" } },
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -43,10 +45,11 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "type": "stat",
       "title": "Guardrails Blocks",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum(workforce_guardrail_blocks_total) or vector(0)", "legendFormat": "Blocks" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "short" } },
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -58,10 +61,11 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "type": "stat",
       "title": "HITL Approvals",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum(workforce_hitl_events_total{event=\"approved\"}) or vector(0)", "legendFormat": "Approved" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "short" } },
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -73,10 +77,11 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
       "type": "timeseries",
       "title": "LLM Token Throughput (Tokens / sec)",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum by (direction) (rate(workforce_llm_tokens_total[1m]))", "legendFormat": "{{direction}}" }
+        { "expr": "sum by (direction) (rate(workforce_llm_tokens_total[1m])) or vector(0)", "legendFormat": "{{direction}}" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "reqps" } },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
     },
     {
@@ -84,10 +89,11 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "type": "timeseries",
       "title": "Redis Cache Lifecycle Events Rate",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum by (event) (rate(workforce_redis_cache_events_total[1m]))", "legendFormat": "{{event}}" }
+        { "expr": "sum by (event) (rate(workforce_redis_cache_events_total[1m])) or vector(0)", "legendFormat": "{{event}}" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "ops" } },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
     },
     {
@@ -95,10 +101,11 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
       "type": "timeseries",
       "title": "Guardrail Interceptions by Reason",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "sum by (reason) (increase(workforce_guardrail_blocks_total[5m]))", "legendFormat": "{{reason}}" }
+        { "expr": "sum by (reason) (increase(workforce_guardrail_blocks_total[5m])) or vector(0)", "legendFormat": "{{reason}}" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "short" } },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
     },
     {
@@ -106,10 +113,11 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
       "type": "timeseries",
       "title": "FastAPI HTTP Request Latency (p90)",
-      "datasource": "Prometheus",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "histogram_quantile(0.90, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))", "legendFormat": "p90 latency" }
+        { "expr": "histogram_quantile(0.90, sum by (le) (rate(http_request_duration_highr_seconds_bucket[5m]))) or vector(0)", "legendFormat": "p90 latency" }
       ],
+      "fieldConfig": { "defaults": { "noValue": "0", "unit": "s" } },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
     }
   ],

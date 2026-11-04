@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Menu, Bot, Settings, Layers, Workflow, ChevronDown, CheckSquare, UserCheck } from 'lucide-react';
+import { Menu, Bot, Settings, Layers, Workflow, ChevronDown, CheckSquare, UserCheck, Activity } from 'lucide-react';
 import type { AppConfig, ChatMessage, EmployeeProfile } from './types';
 import { loadConfig, defaultConfig, currentEmployee as fallbackEmployee } from './config';
 import ChatInterface from './components/ChatInterface';
@@ -7,6 +7,7 @@ import Sidebar, { ChatSession } from './components/Sidebar';
 import SettingsModal from './components/SettingsModal';
 import AboutModal from './components/AboutModal';
 import PendingApprovalsModal from './components/PendingApprovalsModal';
+import ObservabilityModal from './components/ObservabilityModal';
 
 interface FullSession extends ChatSession {
   messages: ChatMessage[];
@@ -75,6 +76,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+  const [showObservability, setShowObservability] = useState(false);
   const [showGraph, setShowGraph] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activePrompt, setActivePrompt] = useState<string>('');
@@ -405,6 +407,16 @@ export default function App() {
             <span className="hidden md:inline">架构与工具</span>
           </button>
 
+          {/* 可观测性监控仪表盘入口 */}
+          <button
+            onClick={() => setShowObservability(true)}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-all border bg-blue-600/20 text-blue-300 border-blue-500/40 hover:bg-blue-600/30 hover:text-white shadow-sm"
+            title="在主窗口内直接查看 Prometheus & Grafana 实时时序与聚合监控大屏"
+          >
+            <Activity className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+            <span className="font-medium">监控仪表盘</span>
+          </button>
+
           {/* LangGraph 状态机拓扑监控入口 */}
           <button
             onClick={() => setShowGraph((prev) => !prev)}
@@ -443,6 +455,7 @@ export default function App() {
               onSelectSession={setCurrentSessionId}
               onDeleteSession={handleDeleteSession}
               employee={currentEmployee}
+              onOpenObservability={() => setShowObservability(true)}
             />
           </div>
         )}
@@ -500,6 +513,12 @@ export default function App() {
           onClose={() => setShowAbout(false)}
         />
       )}
+
+      {/* Prometheus & Grafana 实时监控仪表盘模态窗口 */}
+      <ObservabilityModal
+        isOpen={showObservability}
+        onClose={() => setShowObservability(false)}
+      />
     </div>
   );
 }

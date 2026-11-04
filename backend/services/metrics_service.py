@@ -120,6 +120,24 @@ MET_GRAPH_NODE_DURATION = _create_histogram(
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
 
+def _init_default_metrics() -> None:
+    """生产级指标零初始化：确保在无外部流量时，Prometheus 与 Grafana 也能展示基线 0 而非 No Data"""
+    try:
+        for direction in ("input", "output"):
+            MET_LLM_TOKENS.labels(direction=direction, model="qwen-max", purpose="reasoning").inc(0)
+        for outcome in ("ok", "error"):
+            MET_LLM_CALLS.labels(model="qwen-max", outcome=outcome, purpose="reasoning").inc(0)
+        for ev in ("hit", "miss", "put", "invalidate"):
+            MET_REDIS_CACHE_EVENTS.labels(event=ev, cache_type="qa").inc(0)
+        for reason in ("injection", "off_topic"):
+            MET_GUARDRAIL_BLOCKS.labels(reason=reason, check_type="l1_regex").inc(0)
+        for hitl_ev in ("triggered", "approved", "rejected"):
+            MET_HITL_EVENTS.labels(event=hitl_ev, tool_name="submit_leave_request").inc(0)
+    except Exception as e:
+        logger.debug(f"Metrics zero-init note: {e}")
+
+_init_default_metrics()
+
 
 # ── 记录辅助函数 ──────────────────────────────────────────────────────────
 

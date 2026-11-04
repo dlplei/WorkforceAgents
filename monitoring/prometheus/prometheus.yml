@@ -9,8 +9,7 @@ scrape_configs:
     static_configs:
       - targets:
           - 'host.containers.internal:8000'
-          - 'host.docker.internal:8000'
-          - 'localhost:8000'
         labels:
           app: 'workforce-operations-agent'
           env: 'local-dev'
+

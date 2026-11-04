@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, MessageSquare, Trash2, Calendar, FileText, Plane, HelpCircle, ChevronUp, ChevronDown, CheckSquare, ShieldCheck } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Calendar, FileText, Plane, HelpCircle, ChevronUp, ChevronDown, CheckSquare, ShieldCheck, Activity } from 'lucide-react';
 import { currentEmployee as defaultEmployee } from '../config';
 import type { EmployeeProfile } from '../types';
 
@@ -17,6 +17,7 @@ interface Props {
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   employee?: EmployeeProfile;
+  onOpenObservability?: () => void;
 }
 
 export default function Sidebar({
@@ -27,6 +28,7 @@ export default function Sidebar({
   onSelectSession,
   onDeleteSession,
   employee,
+  onOpenObservability,
 }: Props) {
   const [showProfileDetail, setShowProfileDetail] = useState(false);
   const activeEmp = employee || {
@@ -85,6 +87,18 @@ export default function Sidebar({
             </button>
           ))}
         </div>
+        {onOpenObservability && (
+          <div className="mt-2 pt-2 border-t border-slate-800/80">
+            <button
+              onClick={onOpenObservability}
+              className="w-full flex items-center space-x-2 px-2.5 py-1.5 rounded-lg text-xs text-blue-300 hover:text-white hover:bg-blue-600/20 text-left transition-colors border border-blue-500/20"
+              title="在主窗口打开监控仪表盘"
+            >
+              <Activity className="w-3.5 h-3.5 text-blue-400 animate-pulse flex-shrink-0" />
+              <span className="truncate font-medium">监控仪表盘 (Grafana)</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 历史对话列表 */}

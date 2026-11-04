@@ -118,11 +118,34 @@ def init_db() -> bool:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1;")
                 try:
-                    # 动态平滑迁移：补齐审批流历史与审计留言字段
+                    # 动态平滑迁移：补齐审批流历史与审计留言字段，以及人事证明与会话持久化表
                     cur.execute(
                         """
                         ALTER TABLE approvals ADD COLUMN IF NOT EXISTS comment TEXT;
                         ALTER TABLE approvals ADD COLUMN IF NOT EXISTS action_date VARCHAR(50);
+
+                        CREATE TABLE IF NOT EXISTS documents (
+                            id VARCHAR(50) PRIMARY KEY,
+                            employee_id VARCHAR(50) REFERENCES employees(id) ON DELETE CASCADE,
+                            applicant VARCHAR(100) NOT NULL,
+                            doc_type VARCHAR(50) NOT NULL,
+                            purpose VARCHAR(200) NOT NULL,
+                            language VARCHAR(50) DEFAULT '中文',
+                            status VARCHAR(50) NOT NULL DEFAULT 'processing',
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            completed_at TIMESTAMP WITH TIME ZONE,
+                            metadata JSONB DEFAULT '{}'::jsonb
+                        );
+
+                        CREATE TABLE IF NOT EXISTS chat_messages (
+                            id VARCHAR(100) PRIMARY KEY,
+                            session_id VARCHAR(100) NOT NULL,
+                            employee_id VARCHAR(50) REFERENCES employees(id) ON DELETE CASCADE,
+                            role VARCHAR(20) NOT NULL,
+                            content TEXT NOT NULL,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            metadata JSONB DEFAULT '{}'::jsonb
+                        );
                         """
                     )
                     conn.commit()
@@ -405,6 +428,23 @@ _in_memory_tickets: List[Dict[str, Any]] = [
         "external_system_id": "SN-INC-10921"
     }
 ]
+
+_in_memory_documents: List[Dict[str, Any]] = [
+    {
+        "id": "DOC-20260501-01",
+        "employee_id": DEFAULT_EMPLOYEE_ID,
+        "applicant": "张明",
+        "doc_type": "在职证明",
+        "purpose": "出国签证办理使用",
+        "language": "中文",
+        "status": "completed",
+        "created_at": "2026-05-01 10:00:00",
+        "completed_at": "2026-05-02 14:30:00",
+        "metadata": {"archived": True},
+    }
+]
+
+_in_memory_chat_messages: List[Dict[str, Any]] = []
 
 
 def create_approval(
@@ -851,4 +891,273 @@ def query_hr_tickets(employee_id: str = DEFAULT_EMPLOYEE_ID, ticket_id: Optional
         if ticket_id:
             results = [t for t in results if t.get("id") == ticket_id]
         return sanitize_db_output(results)
+
+
+
+# ============ 人事证明与申请 (Certificates & Documents) ============
+
+def normalize_doc_type(doc_type: str) -> str:
+    """归一化证明文件类型名称"""
+    raw = (doc_type or "").strip().lower()
+    if any(k in raw for k in ["在职", "employment"]):
+        return "在职证明"
+    if any(k in raw for k in ["收入", "薪酬", "income", "salary"]):
+        return "收入证明"
+    if any(k in raw for k in ["实习", "intern"]):
+        return "实习证明"
+    if any(k in raw for k in ["离职", "leaving", "termination"]):
+        return "离职证明"
+    return doc_type.strip() if doc_type else "在职证明"
+
+
+def match_document_purpose(p1: str, p2: str) -> bool:
+    """比较两个开具用途是否实质相同"""
+    s1 = (p1 or "").strip().lower()
+    s2 = (p2 or "").strip().lower()
+    if not s1 or not s2:
+        return True
+    if s1 in s2 or s2 in s1:
+        return True
+    keywords = ["签证", "贷款", "买房", "购房", "落户", "入学", "入职", "离职", "车贷", "房贷", "公证", "信用卡"]
+    for kw in keywords:
+        if kw in s1 and kw in s2:
+            return True
+    return False
+
+
+def create_document(
+    doc_id: str,
+    employee_id: str,
+    applicant: str,
+    doc_type: str,
+    purpose: str,
+    language: str = "中文",
+    status: str = "processing",
+    metadata: Optional[Dict[str, Any]] = None,
+    created_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """创建人事证明申请记录"""
+    norm_type = normalize_doc_type(doc_type)
+    now_str = created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO documents (id, employee_id, applicant, doc_type, purpose, language, status, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    RETURNING id, employee_id, applicant, doc_type, purpose, language, status, created_at, completed_at, metadata;
+                    """,
+                    (doc_id, employee_id, applicant, norm_type, purpose, language, status, meta_json)
+                )
+                res = cur.fetchone()
+                conn.commit()
+                if res:
+                    return sanitize_db_output(dict(res))
+    except Exception:
+        pass
+
+    item = {
+        "id": doc_id,
+        "employee_id": employee_id,
+        "applicant": applicant,
+        "doc_type": norm_type,
+        "purpose": purpose,
+        "language": language,
+        "status": status,
+        "created_at": now_str,
+        "completed_at": None,
+        "metadata": metadata or {},
+    }
+    _in_memory_documents.append(item)
+    return item
+
+
+
+def query_documents(
+    employee_id: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    status: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """查询人事证明申请记录"""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                where, params = [], []
+                if employee_id:
+                    where.append("employee_id = %s")
+                    params.append(employee_id)
+                if doc_type:
+                    where.append("doc_type = %s")
+                    params.append(normalize_doc_type(doc_type))
+                if status:
+                    where.append("status = %s")
+                    params.append(status)
+                where_clause = ("WHERE " + " AND ".join(where)) if where else ""
+                cur.execute(
+                    f"""
+                    SELECT id, employee_id, applicant, doc_type, purpose, language, status, created_at, completed_at, metadata
+                    FROM documents
+                    {where_clause}
+                    ORDER BY created_at DESC;
+                    """,
+                    tuple(params)
+                )
+                rows = cur.fetchall()
+                if rows is not None:
+                    return sanitize_db_output([dict(r) for r in rows])
+    except Exception:
+        pass
+
+    results = list(_in_memory_documents)
+    if employee_id:
+        results = [d for d in results if d.get("employee_id") == employee_id]
+    if doc_type:
+        norm_t = normalize_doc_type(doc_type)
+        results = [d for d in results if d.get("doc_type") == norm_t]
+    if status:
+        results = [d for d in results if d.get("status") == status]
+    results.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return sanitize_db_output(results)
+
+
+def check_duplicate_document(
+    employee_id: str,
+    doc_type: str,
+    purpose: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    检查员工针对该类型与用途的证明申请是否存在重复：
+    1. 在途申请校验 (In-flight check): 员工名下存在相同类型且用途相似的未办结单据（pending / processing）
+    2. 政策防重冷静期校验 (Cooldown check - POL-005): 30天内是否已开具相同用途的证明 (completed)
+    返回 None 表示合规可发起；否则返回包含拦截原因的字典
+    """
+    norm_t = normalize_doc_type(doc_type)
+    all_docs = query_documents(employee_id=employee_id, doc_type=norm_t)
+
+    # 1. 检查是否存在未办结的在途申请 (In-flight requests)
+    for doc in all_docs:
+        doc_status = str(doc.get("status") or "").lower()
+        if doc_status in ("pending", "processing"):
+            if match_document_purpose(purpose, doc.get("purpose", "")):
+                created_time = str(doc.get("created_at") or "")[:19]
+                return {
+                    "is_duplicate": True,
+                    "type": "in_flight",
+                    "existing_doc": doc,
+                    "message": f"您于 {created_time[:10]} 提交的【{norm_t}】（用途：{doc.get('purpose')}，单号：{doc.get('id')}）当前仍在处理中，预计1-2个工作日内办结，无需重复提交申请。"
+                }
+
+    # 2. 检查 30 天内是否已开具相同用途（依据 POL-005 规定）
+    from datetime import datetime as dt, timedelta
+    now_dt = dt.now()
+    thirty_days_ago = now_dt - timedelta(days=30)
+    for doc in all_docs:
+        doc_status = str(doc.get("status") or "").lower()
+        if doc_status in ("completed", "approved"):
+            if match_document_purpose(purpose, doc.get("purpose", "")):
+                ts_str = str(doc.get("completed_at") or doc.get("created_at") or "")
+                if ts_str:
+                    try:
+                        clean_ts = ts_str[:19].replace("T", " ")
+                        doc_dt = dt.strptime(clean_ts, "%Y-%m-%d %H:%M:%S") if len(clean_ts) == 19 else dt.strptime(clean_ts[:10], "%Y-%m-%d")
+                        if doc_dt >= thirty_days_ago:
+                            return {
+                                "is_duplicate": True,
+                                "type": "cooldown_violation",
+                                "existing_doc": doc,
+                                "message": f"根据公司《POL-005 证明开具管理规定》第三条，同一用途（{doc.get('purpose')}）30天内不可重复开具【{norm_t}】。您最近已于 {clean_ts[:10]} 开具过单号为 {doc.get('id')} 的证明。如因使馆拒签重递或材料遗失等特殊紧急情况，请提报 HR 服务工单由专员人工复核办理。"
+                            }
+                    except Exception:
+                        pass
+
+    return None
+
+
+
+# ============ 会话消息持久化 (Chat Messages Persistence) ============
+
+def save_chat_message(
+    message_id: str,
+    session_id: str,
+    employee_id: str,
+    role: str,
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """持久化保存会话消息"""
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    meta_json = json.dumps(metadata or {}, ensure_ascii=False)
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages (id, session_id, employee_id, role, content, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    RETURNING id, session_id, employee_id, role, content, created_at, metadata;
+                    """,
+                    (message_id, session_id, employee_id, role, content, meta_json)
+                )
+                res = cur.fetchone()
+                conn.commit()
+                if res:
+                    return sanitize_db_output(dict(res))
+    except Exception:
+        pass
+
+    item = {
+        "id": message_id,
+        "session_id": session_id,
+        "employee_id": employee_id,
+        "role": role,
+        "content": content,
+        "created_at": now_str,
+        "metadata": metadata or {},
+    }
+    _in_memory_chat_messages.append(item)
+    return item
+
+
+def get_recent_chat_messages(
+    employee_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """获取员工或会话最近的对话历史消息"""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                where, params = [], []
+                if employee_id:
+                    where.append("employee_id = %s")
+                    params.append(employee_id)
+                if session_id:
+                    where.append("session_id = %s")
+                    params.append(session_id)
+                where_clause = ("WHERE " + " AND ".join(where)) if where else ""
+                cur.execute(
+                    f"""
+                    SELECT id, session_id, employee_id, role, content, created_at, metadata
+                    FROM chat_messages
+                    {where_clause}
+                    ORDER BY created_at ASC
+                    LIMIT %s;
+                    """,
+                    (*params, limit)
+                )
+                rows = cur.fetchall()
+                if rows is not None:
+                    return sanitize_db_output([dict(r) for r in rows])
+    except Exception:
+        pass
+
+    results = list(_in_memory_chat_messages)
+    if employee_id:
+        results = [m for m in results if m.get("employee_id") == employee_id]
+    if session_id:
+        results = [m for m in results if m.get("session_id") == session_id]
+    results.sort(key=lambda x: str(x.get("created_at") or ""))
+    return sanitize_db_output(results[-limit:])
 

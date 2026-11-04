@@ -25,12 +25,13 @@ print(f"   - API Key: {'已配置 (' + config.api_key[:8] + '...)' if config.api
 
 print("\n" + "=" * 60)
 
-if not config.api_key:
-    print("⚠️  警告: API Key 未配置!")
-    print("💡 请复制 .env.example 为 .env 并填入你的 API Key")
-    print("=" * 60)
-    sys.exit(1)
-else:
-    print("✅ 配置正常，可以启动服务")
-    print("=" * 60)
-    sys.exit(0)
+if __name__ == "__main__":
+    if not config.api_key:
+        print("⚠️  警告: API Key 未配置!")
+        print("💡 请复制 .env.example 为 .env 并填入你的 API Key")
+        print("=" * 60)
+        sys.exit(1)
+    else:
+        print("✅ 配置正常，可以启动服务")
+        print("=" * 60)
+        sys.exit(0)

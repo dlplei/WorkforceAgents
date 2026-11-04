@@ -94,3 +94,29 @@ ON CONFLICT (id) DO UPDATE SET
   reason = COALESCE(approvals.reason, EXCLUDED.reason),
   comment = COALESCE(approvals.comment, EXCLUDED.comment),
   action_date = COALESCE(approvals.action_date, EXCLUDED.action_date);
+
+-- 人事证明申请表 (Certificates & Documents)
+CREATE TABLE IF NOT EXISTS documents (
+    id VARCHAR(50) PRIMARY KEY,
+    employee_id VARCHAR(50) REFERENCES employees(id) ON DELETE CASCADE,
+    applicant VARCHAR(100) NOT NULL,
+    doc_type VARCHAR(50) NOT NULL,
+    purpose VARCHAR(200) NOT NULL,
+    language VARCHAR(50) DEFAULT '中文',
+    status VARCHAR(50) NOT NULL DEFAULT 'processing',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- 会话消息持久化表 (Chat History Persistence)
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id VARCHAR(100) PRIMARY KEY,
+    session_id VARCHAR(100) NOT NULL,
+    employee_id VARCHAR(50) REFERENCES employees(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+

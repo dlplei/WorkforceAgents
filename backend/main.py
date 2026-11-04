@@ -4,6 +4,8 @@ Workforce Operations Agent - FastAPI Backend
 import asyncio
 import json
 import decimal
+import time
+import uuid
 from datetime import date, datetime
 import logging
 from typing import Optional, List, Dict, Any
@@ -16,7 +18,17 @@ from pydantic import BaseModel
 from config import LLMConfig, update_config, get_config
 from agent.engine import AgentEngine
 from agent.tools import registry
-from db.database import get_current_employee, get_current_employee_id, set_current_employee_id, get_all_employees, init_db
+from db.database import (
+    get_current_employee,
+    get_current_employee_id,
+    set_current_employee_id,
+    get_all_employees,
+    init_db,
+    save_chat_message,
+    get_recent_chat_messages,
+    query_documents,
+    check_duplicate_document,
+)
 from models import ApprovalActionRequest, ApprovalActionResponse
 from services.hr_adapter import get_hr_adapter
 from services.metrics_service import record_hitl_action
@@ -472,6 +484,21 @@ async def chat(
     set_current_employee_id(current_emp_id)
 
     logger.info(f"💬 收到聊天请求 [员工: {current_emp_id}]: {req.message[:100]}...")
+
+    # 持久化用户提问至 chat_messages 表
+    import uuid as _uuid
+    user_msg_id = f"msg-{int(time.time()*1000)}-{_uuid.uuid4().hex[:6]}"
+    try:
+        save_chat_message(
+            message_id=user_msg_id,
+            session_id=current_emp_id,
+            employee_id=current_emp_id,
+            role="user",
+            content=req.message,
+            metadata={"force_refresh": req.force_refresh, "hitl_confirmed": bool(req.hitl_confirmed)}
+        )
+    except Exception as _e:
+        logger.warning(f"保存用户会话消息失败: {_e}")
     
     # 更新配置（如果请求中提供了）
     if req.config:
@@ -532,6 +559,20 @@ async def chat(
             yield f"data: {json.dumps({'type': 'node_exit', 'content': 'response_generation'}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'message_complete', 'content': cached_text, 'cached': True}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'status', 'content': 'idle'}, ensure_ascii=False)}\n\n"
+
+            # 持久化缓存命中助手的答复
+            try:
+                asst_msg_id = f"msg-{int(time.time()*1000)}-{_uuid.uuid4().hex[:6]}"
+                save_chat_message(
+                    message_id=asst_msg_id,
+                    session_id=current_emp_id,
+                    employee_id=current_emp_id,
+                    role="assistant",
+                    content=cached_text,
+                    metadata={"cached": True}
+                )
+            except Exception as _e:
+                logger.warning(f"保存缓存命中答复失败: {_e}")
 
         return StreamingResponse(
             cached_event_stream(),
@@ -598,6 +639,25 @@ async def chat(
                     tool_calls=captured_tool_calls,
                     tool_results=captured_tool_results,
                 )
+
+            # 持久化助手的最终答复至 chat_messages 表
+            if full_content:
+                try:
+                    asst_msg_id = f"msg-{int(time.time()*1000)}-{_uuid.uuid4().hex[:6]}"
+                    save_chat_message(
+                        message_id=asst_msg_id,
+                        session_id=current_emp_id,
+                        employee_id=current_emp_id,
+                        role="assistant",
+                        content=full_content,
+                        metadata={
+                            "tools_called": tools_called,
+                            "has_hitl_request": has_hitl_request,
+                            "hitl_confirmed": bool(req.hitl_confirmed),
+                        }
+                    )
+                except Exception as _e:
+                    logger.warning(f"保存助手答复失败: {_e}")
         except Exception as e:
             logger.error(f"💥 聊天处理错误: {type(e).__name__}: {e}")
             logger.exception("完整异常堆栈:")
@@ -666,6 +726,43 @@ async def handle_hitl_action(req: HitlDecisionRequest):
             "error": result.error or "执行失败",
         }
 
+
+
+# ============ 会话历史与证明申请查询接口 ============
+
+@app.get("/api/chat/history")
+async def get_chat_history_endpoint(
+    session_id: Optional[str] = None,
+    x_employee_id: Optional[str] = Header(None, alias="X-Employee-Id"),
+    limit: int = 50,
+):
+    """获取当前员工或指定会话的持久化消息历史"""
+    emp_id = x_employee_id or get_current_employee_id() or "E10293"
+    messages = get_recent_chat_messages(employee_id=emp_id, session_id=session_id, limit=limit)
+    return {
+        "success": True,
+        "employee_id": emp_id,
+        "session_id": session_id,
+        "count": len(messages),
+        "messages": messages,
+    }
+
+
+@app.get("/api/documents")
+async def get_documents_endpoint(
+    doc_type: Optional[str] = None,
+    status: Optional[str] = None,
+    x_employee_id: Optional[str] = Header(None, alias="X-Employee-Id"),
+):
+    """查询当前员工名下的人事证明申请记录（支持防重在途与历史完成件回溯）"""
+    emp_id = x_employee_id or get_current_employee_id() or "E10293"
+    docs = query_documents(employee_id=emp_id, doc_type=doc_type, status=status)
+    return {
+        "success": True,
+        "employee_id": emp_id,
+        "count": len(docs),
+        "documents": docs,
+    }
 
 
 # ============ Run Server ============

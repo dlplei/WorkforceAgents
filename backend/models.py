@@ -150,6 +150,31 @@ class HRTicket(BaseModel):
     created_at: Optional[str] = None
     external_system_id: Optional[str] = None
 
+
+class DocumentRecord(BaseModel):
+    """人事证明申请记录"""
+    id: str
+    employee_id: str
+    applicant: str
+    doc_type: str
+    purpose: str
+    language: str = "中文"
+    status: str = "processing"
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatMessageRecord(BaseModel):
+    """会话历史持久化记录"""
+    id: str
+    session_id: str
+    employee_id: str
+    role: Literal["user", "assistant", "system"]
+    content: str
+    created_at: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
 # ============ Knowledge 相关 ============
 
 class PolicyDocument(BaseModel):

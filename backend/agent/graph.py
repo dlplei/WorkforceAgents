@@ -20,7 +20,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 
 from config import LLMConfig
-from db.database import get_current_employee
+from db.database import get_current_employee, check_duplicate_document, normalize_doc_type
 from agent.knowledge import retrieve_knowledge
 from agent.tools import registry, build_hitl_action_request
 
@@ -91,6 +91,9 @@ def build_system_prompt() -> str:
    - 员工或主管询问审批状态（如"帮我查一下近期的审批进度"、"张明请假批复了吗"、"查我上周提交的报销"）时，**绝对严禁**机械索要审批单号！
    - 必须主动调用 `query_approval_status` 工具，根据上下文提取 `applicant_name`、`time_range`（如 "last_7_days", "this_month"）、`status`、`approval_type` 等维度进行联合检索；
    - 当检索到记录时，清晰列出单号、申请事项、提报日期、当前状态与审批人意见；若有多条则有序展示供用户查阅。
+10. **防重复办理与在途单据引导**：
+   - 若系统或工具返回该员工名下已存在在途处理中的单据（如在职证明、工单等），或同一用途处于政策防重冷静期（30天限制），必须清晰向员工解释，告知已有的在途单号、提报日期与预计办结时效，明确提示无需重复申请。
+   - 若员工连续重复提出相同申请，且界面上方已有待确认卡片草案（尚未点击提交），引导员工直接在已有卡片中点击【确认提交执行】，避免频繁生成冗余草稿。
 
 ## 输出格式
 - 使用清晰的 Markdown 格式
@@ -205,6 +208,28 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
 
         # 若属于 confirmation 级别写操作且尚未获得人工授权，触发原生 HITL 门禁挂起
         if is_confirmation_tool and not has_approval:
+            # 业务前置防重校验：对于证明开具等操作，若已存在在途单据或违反30天政策冷静期，直接拦截，不推送无效确认卡片
+            if tool_name == "generate_document":
+                emp = get_current_employee()
+                emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+                raw_dt = tool_args.get("doc_type", "employment_proof")
+                purpose = tool_args.get("purpose", "办理业务")
+                dup_check = check_duplicate_document(emp_id, raw_dt, purpose)
+                if dup_check:
+                    logger.warning(f"🛡️ [HITL Gate 前置拦截] 员工 {emp_id} 申请证明触发防重: {dup_check['message']}")
+                    tool_messages.append(
+                        ToolMessage(
+                            content=json.dumps({
+                                "status": "blocked_by_duplicate",
+                                "instruction": f"【业务防重拦截】：该证明申请无法重复发起。{dup_check['message']}。请直接明确告知员工该拦截原因及已有在途/已办结单号，提示无需重复申请。",
+                                "details": dup_check["message"],
+                            }, ensure_ascii=False),
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                        )
+                    )
+                    continue
+
             logger.info(f"🛡️ [HITL Gate] 捕获写操作 '{tool_name}'，已挂起执行并推送交互确认卡片")
             hitl_req = build_hitl_action_request(tool_name, tool_args, tool_call_id)
 

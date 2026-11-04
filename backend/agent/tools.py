@@ -9,7 +9,12 @@ import logging
 from typing import Dict, Callable, Any, Optional, List
 from models import ToolResult, HitlActionRequest
 from services.hr_adapter import get_hr_adapter
-from db.database import get_current_employee
+from db.database import (
+    get_current_employee,
+    check_duplicate_document,
+    create_document,
+    normalize_doc_type,
+)
 from agent.knowledge import retrieve_knowledge
 
 logger = logging.getLogger(__name__)
@@ -467,17 +472,54 @@ registry.register(
 # 8. 生成证明文件
 async def handle_generate_document(params: dict) -> dict:
     import time as _time
-    doc_id = f"DOC-{int(_time.time())}"
     emp = get_current_employee()
+    emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+    emp_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name", "张明")
+
+    raw_doc_type = params.get("doc_type", "employment_proof")
+    purpose = params.get("purpose", "办理业务")
+    raw_lang = params.get("language", "中文")
+    language = "英文" if any(k in str(raw_lang).lower() for k in ["英", "en", "english"]) else "中文"
+    norm_doc_type = normalize_doc_type(raw_doc_type)
+
+    # 1. 业务防重校验：在途单据防重与 30 天冷静期校验 (POL-005)
+    dup_info = check_duplicate_document(emp_id, norm_doc_type, purpose)
+    if dup_info:
+        logger.warning(f"🛡️ [证明防重拦截] 员工 {emp_id} 重复申请 {norm_doc_type} ({purpose}): {dup_info['message']}")
+        return {
+            "success": False,
+            "error": dup_info["message"],
+            "data": {
+                "blocked": True,
+                "reason": dup_info["type"],
+                "existing_id": dup_info.get("existing_doc", {}).get("id"),
+            },
+        }
+
+    # 2. 正常落库入库
+    doc_id = f"DOC-{int(_time.time())}"
+    create_document(
+        doc_id=doc_id,
+        employee_id=emp_id,
+        applicant=emp_name,
+        doc_type=norm_doc_type,
+        purpose=purpose,
+        language=language,
+        status="processing",
+        metadata={"source": "agent_hitl", "params": params},
+    )
+
     return {
         "success": True,
         "data": {
             "document_id": doc_id,
-            "type": params.get("doc_type"),
-            "employee": emp["name"],
+            "type": norm_doc_type,
+            "purpose": purpose,
+            "language": language,
+            "employee": emp_name,
             "status": "processing",
             "estimated_time": "1-2个工作日",
-            "message": f"{params.get('doc_type')}申请已提交，预计1-2个工作日内完成",
+            "message": f"【{norm_doc_type}】申请已成功提交（单号：{doc_id}），预计1-2个工作日内完成盖章与电子件签发",
         },
     }
 

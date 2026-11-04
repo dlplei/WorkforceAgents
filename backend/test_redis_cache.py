@@ -1,6 +1,6 @@
 """
 Redis 缓存与秒回机制单元测试
-验证复用 chatbi-automotive_redis_1 容器、DB 1 隔离与毫秒级秒回特性
+验证 workforce_redis 容器（映射端口 6380）、DB 1 隔离与毫秒级秒回特性
 """
 import sys
 import unittest

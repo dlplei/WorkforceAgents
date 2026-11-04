@@ -16,7 +16,7 @@ from services.metrics_service import record_guardrail_block, record_guardrail_la
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11435")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
 HR_SEMANTIC_THRESHOLD = float(os.getenv("HR_SEMANTIC_THRESHOLD", "0.45"))
 

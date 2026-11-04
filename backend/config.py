@@ -34,7 +34,7 @@ class RedisConfig(BaseModel):
     """Redis 缓存配置"""
     enabled: bool = os.getenv("REDIS_CACHE_ENABLED", "true").lower() in ("true", "1", "yes")
     host: str = os.getenv("REDIS_HOST", "127.0.0.1")
-    port: int = int(os.getenv("REDIS_PORT", "6379"))
+    port: int = int(os.getenv("REDIS_PORT", "6380"))
     db: int = int(os.getenv("REDIS_DB", "1"))
     password: Optional[str] = os.getenv("REDIS_PASSWORD", None) or None
     ttl: int = int(os.getenv("REDIS_CACHE_TTL", "86400"))  # 默认 24 小时

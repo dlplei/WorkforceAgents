@@ -17,7 +17,7 @@ from models import PolicyDocument, KnowledgeChunk
 
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11435")
 CHROMA_HOST = os.getenv("CHROMA_HOST", "127.0.0.1")
 CHROMA_PORT = int(os.getenv("CHROMA_PORT", "8002"))
 COLLECTION_NAME = "hr_policy_collection"

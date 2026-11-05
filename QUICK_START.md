@@ -24,7 +24,24 @@ https://api.servicesessentials.ibm.com/v1
   - IBM: `https://api.servicesessentials.ibm.com/v1`
   - 其他兼容服务：根据你的服务商提供
 
-## 🎯 正确配置步骤
+## 🚀 Windows 一键启动（推荐）
+
+项目已为你配置好 Windows Terminal 多标签页一键启动脚本，开机后无需逐个敲命令行：
+
+- **桌面双击**：双击桌面的 **`Start_Workforce.lnk`** 快捷方式。
+- **项目目录双击**：双击根目录下的 **`start_dev.bat`**。
+
+该脚本会自动执行：
+1. 检查并按需拉起 Podman 虚拟机（`podman machine start`）；
+2. 启动基础容器组（Postgres, Chroma, Redis, Ollama, Prometheus, Grafana）；
+3. 调起 Windows Terminal，并在两个独立标签页并行运行后端（`FastAPI :8000`）和前端（`Vite :3000`）；
+4. 探测前后端端口健康状态，就绪后自动在浏览器中打开 `http://localhost:3000`。
+
+> **提示**：如需停止服务释放资源，双击桌面的 **`Stop_Workforce.lnk`** 或项目根目录下的 **`stop_dev.bat`** 即可一键停止前后端与暂停容器。
+
+---
+
+## 🎯 手动分步启动步骤
 
 ### 步骤 1：启动后端
 ```bash
@@ -37,11 +54,11 @@ python main.py
 ```bash
 npm run dev
 ```
-前端会在 `http://localhost:5173` 启动
+前端会在 `http://localhost:3000` 启动
 
 ### 步骤 3：打开前端并配置
 
-1. 打开浏览器访问 `http://localhost:5173`
+1. 打开浏览器访问 `http://localhost:3000`
 2. 点击设置面板（或首次使用会自动弹出）
 3. **正确填写**：
    ```

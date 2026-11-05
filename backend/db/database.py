@@ -493,6 +493,38 @@ def create_approval(
         return item
 
 
+def normalize_approval_type_patterns(approval_type: Optional[str]) -> List[str]:
+    """将审批类型关键字（中英文别名与泛称）归一化为多向匹配的关键字模式列表"""
+    if not approval_type:
+        return []
+    at = str(approval_type).strip().lower()
+    # 泛称请假/休假（涵盖各类假期）
+    if at in ("leave", "请假", "休假", "假", "假期"):
+        return ["annual", "sick", "personal", "marriage", "maternity", "年假", "病假", "事假", "婚假", "产假", "调休", "请假", "休假"]
+    # 年假
+    if at in ("annual", "年假", "年休假", "带薪假"):
+        return ["annual", "年假", "年休假"]
+    # 病假
+    if at in ("sick", "病假"):
+        return ["sick", "病假"]
+    # 事假
+    if at in ("personal", "事假"):
+        return ["personal", "事假"]
+    # 婚假
+    if at in ("marriage", "婚假"):
+        return ["marriage", "婚假"]
+    # 产假 / 育儿假
+    if at in ("maternity", "产假", "育儿假"):
+        return ["maternity", "产假", "育儿假"]
+    # 差旅报销
+    if at in ("expense", "报销", "差旅报销", "差旅", "travel"):
+        return ["expense", "报销", "差旅"]
+    # 人事证明
+    if at in ("certificate", "证明", "在职证明", "收入证明"):
+        return ["certificate", "证明"]
+    return [approval_type]
+
+
 def query_approvals(
     employee_id: str = DEFAULT_EMPLOYEE_ID,
     request_id: Optional[str] = None,
@@ -548,8 +580,11 @@ def query_approvals(
                         where.append("(request_date >= %s OR COALESCE(start_date, request_date) >= %s)"); params.extend([start_date, start_date])
                     if end_date:
                         where.append("(request_date <= %s OR COALESCE(end_date, request_date) <= %s)"); params.extend([end_date, end_date])
-                    if approval_type:
-                        where.append("approval_type LIKE %s"); params.append(f"%{approval_type}%")
+                    type_patterns = normalize_approval_type_patterns(approval_type)
+                    if type_patterns:
+                        type_clauses = ["approval_type ILIKE %s" for _ in type_patterns]
+                        where.append(f"({' OR '.join(type_clauses)})")
+                        params.extend([f"%{p}%" for p in type_patterns])
 
                 where_sql = ("WHERE " + " AND ".join(where)) if where else ""
                 sql = f"""
@@ -592,8 +627,12 @@ def query_approvals(
         results = [a for a in results if str(a.get("request_date") or a.get("start_date") or "") >= start_date]
     if end_date:
         results = [a for a in results if str(a.get("request_date") or a.get("end_date") or "") <= end_date]
-    if approval_type:
-        results = [a for a in results if approval_type in str(a.get("approval_type") or a.get("type") or "")]
+    type_patterns = normalize_approval_type_patterns(approval_type)
+    if type_patterns:
+        results = [
+            a for a in results
+            if any(p.lower() in str(a.get("approval_type") or a.get("type") or "").lower() for p in type_patterns)
+        ]
 
     results.sort(key=lambda x: str(x.get("request_date") or ""), reverse=True)
     return sanitize_db_output(results)
@@ -710,6 +749,69 @@ def update_approval_status(
             target = a
             target_idx = idx
             break
+
+    # 1. 审批前置校验：查询当前单据原始状态与重叠防呆
+    curr_approval = None
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM approvals WHERE id = %s;", (approval_id,))
+                r = cur.fetchone()
+                if r:
+                    curr_approval = sanitize_db_output(dict(r))
+    except Exception:
+        pass
+    if not curr_approval and target:
+        curr_approval = dict(target)
+
+    if curr_approval:
+        orig_status = str(curr_approval.get("status") or "").lower()
+        # 幂等性防护：若已处于 approved 且决策依然是 approved，避免重复扣假
+        if orig_status == "approved" and norm_decision == "approved":
+            return sanitize_db_output({
+                "success": True,
+                "approval": curr_approval,
+                "leave_balance_deducted": None,
+                "message": f"审批单 {approval_id} 此前已处于【已通过】状态，无需重复审批与扣减假期"
+            })
+        # 状态防呆：已作废或已撤回单据不可审批
+        if orig_status in ("invalidated", "cancelled"):
+            return sanitize_db_output({
+                "success": False,
+                "approval": curr_approval,
+                "leave_balance_deducted": None,
+                "message": f"审批失败：审批单 {approval_id} 当前已被【作废/撤销】，无法执行审批决策"
+            })
+
+        # 主管审批二次互斥锁：通过休假单时，检查该员工该日期区间是否已被其他生效单据占用
+        if norm_decision == "approved":
+            a_type = str(curr_approval.get("approval_type") or curr_approval.get("type") or "")
+            s_date = curr_approval.get("start_date")
+            e_date = curr_approval.get("end_date")
+            emp_id = curr_approval.get("employee_id") or DEFAULT_EMPLOYEE_ID
+            leave_keywords = ("annual", "sick", "personal", "marriage", "maternity", "假")
+            if any(k in a_type.lower() for k in leave_keywords) and s_date and e_date:
+                conflict = check_duplicate_leave(
+                    employee_id=emp_id,
+                    start_date=s_date,
+                    end_date=e_date,
+                    exclude_approval_id=approval_id,
+                    only_approved=True
+                )
+                if conflict:
+                    c_appr = conflict.get("conflict_approval", {})
+                    c_id = c_appr.get("id") or "历史单据"
+                    c_type = c_appr.get("approval_type") or c_appr.get("type") or "请假"
+                    return sanitize_db_output({
+                        "success": False,
+                        "approval": curr_approval,
+                        "leave_balance_deducted": None,
+                        "message": (
+                            f"【审批防重拦截】：申请人 {curr_approval.get('applicant', '')} "
+                            f"在 {s_date} 至 {e_date} 期间已有已批准生效的休假（单号: {c_id}，类型: {c_type}）。"
+                            f"系统已禁止重复批准以防止假期额度被重复扣减！建议对本单据予以驳回或作废。"
+                        )
+                    })
 
     action_today = datetime.now().strftime("%Y-%m-%d")
     final_comment = comment or ("审批通过" if norm_decision == "approved" else "审批驳回")
@@ -1074,6 +1176,82 @@ def check_duplicate_document(
 
     return None
 
+
+
+def check_duplicate_leave(
+    employee_id: str,
+    start_date: str,
+    end_date: str,
+    exclude_approval_id: Optional[str] = None,
+    only_approved: bool = False
+) -> Optional[Dict[str, Any]]:
+    """
+    检查员工休假申请的日期重叠冲突（防重报、防重审）：
+    1. 判定已有单据是否与 [start_date, end_date] 发生时间区间重叠 (max(s1, s2) <= min(e1, e2))
+    2. 针对在途 pending（审批中）或 approved（已通过）单据进行排他阻断
+    3. only_approved=True 时，仅对已审批通过的单据进行互斥校验（用于主管审批把关）
+    """
+    if not start_date or not end_date:
+        return None
+
+    # 日期合法性校验
+    if start_date > end_date:
+        return {
+            "is_duplicate": True,
+            "type": "invalid_date_range",
+            "message": f"请假开始日期 ({start_date}) 不能晚于结束日期 ({end_date})"
+        }
+
+    # 查询该员工所有单据
+    approvals = query_approvals(employee_id=employee_id, scope="all")
+    leave_keywords = ("annual", "sick", "personal", "marriage", "maternity", "假")
+    valid_statuses = ("approved",) if only_approved else ("pending", "approved")
+
+    for a in approvals:
+        a_id = a.get("id") or a.get("approval_id")
+        if exclude_approval_id and str(a_id).strip() == str(exclude_approval_id).strip():
+            continue
+
+        a_emp_id = a.get("employee_id")
+        if a_emp_id and str(a_emp_id).strip() != str(employee_id).strip():
+            continue
+
+        status = str(a.get("status") or "").lower()
+        if status not in valid_statuses:
+            continue
+
+        a_type = str(a.get("approval_type") or a.get("type") or "")
+        if not any(k in a_type.lower() for k in leave_keywords):
+            continue
+
+        s = str(a.get("start_date") or "")
+        e = str(a.get("end_date") or "")
+        if not s or not e:
+            continue
+
+        # 检查时间区间交集：max(start_date, s) <= min(end_date, e)
+        if max(start_date, s) <= min(end_date, e):
+            status_desc = "正在审批中" if status == "pending" else "已审批通过生效"
+            status_type = "in_flight" if status == "pending" else "already_approved"
+            approver_str = f"（直属审批人: {a.get('approver')}）" if a.get('approver') else ""
+            msg = (
+                f"您在 {s} 至 {e} 期间已有{status_desc}的休假申请"
+                f"（单号: {a_id}，类型: {a_type}{approver_str}），"
+                f"系统禁止在同一时段重复申请休假。"
+            )
+            if status == "pending":
+                msg += "如需修改请假时间或事由，请撤回原申请后再重新发起。"
+            else:
+                msg += "如需调整已生效的假期，请先走销假流程。"
+
+            return {
+                "is_duplicate": True,
+                "type": status_type,
+                "conflict_approval": a,
+                "message": msg
+            }
+
+    return None
 
 
 # ============ 会话消息持久化 (Chat Messages Persistence) ============

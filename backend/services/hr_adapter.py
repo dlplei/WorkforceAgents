@@ -107,6 +107,9 @@ class LocalPostgresAdapter(IHRServiceAdapter):
         reason: str,
         approver: str
     ) -> Dict[str, Any]:
+        conflict = database.check_duplicate_leave(employee_id, start_date, end_date)
+        if conflict:
+            raise ValueError(conflict["message"])
         req_id = f"APR-{random.randint(100, 999)}"
         today_str = datetime.date.today().isoformat()
         return database.create_approval(

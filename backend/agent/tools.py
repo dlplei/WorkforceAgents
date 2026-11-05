@@ -12,6 +12,7 @@ from services.hr_adapter import get_hr_adapter
 from db.database import (
     get_current_employee,
     check_duplicate_document,
+    check_duplicate_leave,
     create_document,
     normalize_doc_type,
 )
@@ -292,25 +293,55 @@ registry.register(
 async def handle_submit_leave_request(params: dict) -> dict:
     adapter = get_hr_adapter()
     emp = get_current_employee()
-    created = adapter.submit_leave_request(
-        employee_id=emp["id"],
-        applicant=emp["name"],
-        leave_type=params.get("leave_type", "annual"),
-        start_date=params.get("start_date", ""),
-        end_date=params.get("end_date", ""),
-        reason=params.get("reason", ""),
-        approver=emp["manager"]
-    )
+    emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+    emp_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name", "张明")
+    emp_mgr = emp.get("manager") if isinstance(emp, dict) else getattr(emp, "manager", "王经理")
+
+    start_date = params.get("start_date", "").strip()
+    end_date = params.get("end_date", "").strip()
+    leave_type = params.get("leave_type", "annual")
+    reason = params.get("reason", "")
+
+    # 前置业务防重校验：排他区间重叠检测
+    dup_check = check_duplicate_leave(emp_id, start_date, end_date)
+    if dup_check:
+        logger.warning(f"🛡️ [休假防重拦截] 员工 {emp_id} 申请 {start_date} 至 {end_date} 冲突: {dup_check['message']}")
+        return {
+            "success": False,
+            "error": dup_check["message"],
+            "data": {
+                "message": dup_check["message"],
+                "conflict": dup_check
+            }
+        }
+
+    try:
+        created = adapter.submit_leave_request(
+            employee_id=emp_id,
+            applicant=emp_name,
+            leave_type=leave_type,
+            start_date=start_date,
+            end_date=end_date,
+            reason=reason,
+            approver=emp_mgr
+        )
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "data": {"message": str(e)}
+        }
+
     return {
         "success": True,
         "data": {
             "request_id": created.get("id"),
             "status": "pending_approval",
-            "approver": emp["manager"],
-            "leave_type": params.get("leave_type"),
-            "start_date": params.get("start_date"),
-            "end_date": params.get("end_date"),
-            "message": f"休假申请已提交，等待 {emp['manager']} 审批",
+            "approver": emp_mgr,
+            "leave_type": leave_type,
+            "start_date": start_date,
+            "end_date": end_date,
+            "message": f"休假申请已提交，等待 {emp_mgr} 审批",
         },
     }
 
@@ -671,8 +702,17 @@ async def handle_review_approval_request(params: dict) -> dict:
         decision=decision,
         comment=comment
     )
+    if not res.get("success", True):
+        return {
+            "success": False,
+            "error": res.get("message", "审批执行失败"),
+            "data": {
+                "message": res.get("message", "审批执行失败"),
+                "approval": res.get("approval", {})
+            }
+        }
     return {
-        "success": res.get("success", True),
+        "success": True,
         "data": {
             "message": res.get("message", ""),
             "approval": res.get("approval", {}),

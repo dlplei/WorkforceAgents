@@ -20,7 +20,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 
 from config import LLMConfig
-from db.database import get_current_employee, check_duplicate_document, normalize_doc_type
+from db.database import get_current_employee, check_duplicate_document, check_duplicate_leave, normalize_doc_type
 from agent.knowledge import retrieve_knowledge
 from agent.tools import registry, build_hitl_action_request
 
@@ -222,6 +222,28 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
                             content=json.dumps({
                                 "status": "blocked_by_duplicate",
                                 "instruction": f"【业务防重拦截】：该证明申请无法重复发起。{dup_check['message']}。请直接明确告知员工该拦截原因及已有在途/已办结单号，提示无需重复申请。",
+                                "details": dup_check["message"],
+                            }, ensure_ascii=False),
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                        )
+                    )
+                    continue
+
+            # 业务前置防重校验 2：对于休假申请，若同一时段已存在在途 pending 或已生效 approved 单据，直接拦截
+            if tool_name == "submit_leave_request":
+                emp = get_current_employee()
+                emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+                s_date = str(tool_args.get("start_date") or "").strip()
+                e_date = str(tool_args.get("end_date") or "").strip()
+                dup_check = check_duplicate_leave(emp_id, s_date, e_date)
+                if dup_check:
+                    logger.warning(f"🛡️ [HITL Gate 前置拦截] 员工 {emp_id} 申请休假冲突: {dup_check['message']}")
+                    tool_messages.append(
+                        ToolMessage(
+                            content=json.dumps({
+                                "status": "blocked_by_duplicate",
+                                "instruction": f"【业务防重拦截】：该休假申请无法提交。{dup_check['message']}。请直接明确告知员工冲突原因与单据详情，提示无需且禁止重复提交相同日期的请假。",
                                 "details": dup_check["message"],
                             }, ensure_ascii=False),
                             tool_call_id=tool_call_id,

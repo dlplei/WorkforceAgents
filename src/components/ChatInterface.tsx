@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap, RotateCcw, Database } from 'lucide-react';
+import { Bot, Trash2, Cog, Loader2, Send, User, Wrench, ChevronUp, ChevronDown, Workflow, Zap, RotateCcw, Database, Copy, Check } from 'lucide-react';
 import type { ChatMessage, AgentEvent, ToolCallInfo, ToolResultInfo, ExecutionStep, AppConfig, HitlActionRequest, EmployeeProfile } from '../types';
 import GraphInspector from './GraphInspector';
 import HitlApprovalCard from './HitlApprovalCard';
@@ -823,6 +823,30 @@ function MessageBubble({
   const isUser = message.role === 'user';
   const formatted = isUser ? message.content : formatMessage(message.content);
   const [showTools, setShowTools] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(message.content);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = message.content;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('复制失败:', err);
+    }
+  };
 
   return (
     <div className={`flex items-start space-x-3 ${isUser ? 'flex-row-reverse space-x-reverse' : ''}`}>
@@ -835,11 +859,24 @@ function MessageBubble({
           <Bot className="w-3.5 h-3.5 text-purple-400" />
         )}
       </div>
-      <div className={`rounded-xl px-4 py-3 max-w-2xl ${
+      <div className={`rounded-xl px-4 py-3 max-w-2xl relative group ${
         isUser
           ? 'bg-blue-600/20 border border-blue-500/30 rounded-tr-none'
           : 'bg-slate-800/50 border border-slate-700/50 rounded-tl-none'
       }`}>
+        {!isUser && (
+          <button
+            onClick={handleCopy}
+            className="absolute top-2.5 right-2.5 p-1 rounded-md text-slate-400 hover:text-cyan-300 hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800/80 border border-slate-700/60 cursor-pointer"
+            title="复制回复内容"
+          >
+            {copied ? (
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Copy className="w-3.5 h-3.5" />
+            )}
+          </button>
+        )}
         {!isUser && message.cached && (
           <div className="mb-2">
             <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
@@ -877,7 +914,7 @@ function MessageBubble({
         {isUser ? (
           <div className="text-sm text-slate-200 whitespace-pre-wrap">{message.content}</div>
         ) : (
-          <div className="text-sm text-slate-200 leading-relaxed" dangerouslySetInnerHTML={{ __html: formatted }} />
+          <div className="text-sm text-slate-200 leading-relaxed pr-6" dangerouslySetInnerHTML={{ __html: formatted }} />
         )}
         {!isUser && message.hitlRequest && (
           <HitlApprovalCard
@@ -889,19 +926,40 @@ function MessageBubble({
           />
         )}
 
-        {!isUser && !isRunning && onRegenerate && (
+        {!isUser && (
           <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center justify-between text-xs text-slate-400">
             <span className="text-[10px] text-slate-500">
               {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
-            <button
-              onClick={() => onRegenerate(message.id)}
-              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-700/60 transition-colors"
-              title="跳过 Redis 缓存，强制直连大模型重新计算并刷新缓存"
-            >
-              <RotateCcw className="w-3 h-3" />
-              <span>重新生成</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={handleCopy}
+                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-700/60 transition-colors cursor-pointer"
+                title="复制回复内容"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-400">已复制</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>复制</span>
+                  </>
+                )}
+              </button>
+              {!isRunning && onRegenerate && (
+                <button
+                  onClick={() => onRegenerate(message.id)}
+                  className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-slate-400 hover:text-cyan-300 hover:bg-slate-700/60 transition-colors cursor-pointer"
+                  title="跳过 Redis 缓存，强制直连大模型重新计算并刷新缓存"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>重新生成</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>

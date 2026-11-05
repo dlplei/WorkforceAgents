@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Menu, Bot, Settings, Layers, Workflow, ChevronDown, CheckSquare, UserCheck, Activity } from 'lucide-react';
 import type { AppConfig, ChatMessage, EmployeeProfile } from './types';
 import { loadConfig, defaultConfig, currentEmployee as fallbackEmployee } from './config';
@@ -91,6 +91,33 @@ export default function App() {
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
   const [showApprovalsModal, setShowApprovalsModal] = useState(false);
   const [personaMenuOpen, setPersonaMenuOpen] = useState(false);
+  const personaMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!personaMenuOpen) return;
+
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (personaMenuRef.current && !personaMenuRef.current.contains(event.target as Node)) {
+        setPersonaMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPersonaMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [personaMenuOpen]);
 
   const backendBase = (config.backendUrl || '').replace(/\/+$/, '') || '';
 
@@ -263,7 +290,7 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-slate-900 text-white overflow-hidden">
       {/* Top Bar */}
-      <header className="flex items-center justify-between px-4 py-2 bg-slate-800/80 border-b border-slate-700/50 backdrop-blur-sm">
+      <header className="relative z-30 flex items-center justify-between px-4 py-2 bg-slate-800/80 border-b border-slate-700/50 backdrop-blur-sm">
         <div className="flex items-center space-x-3">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -286,7 +313,7 @@ export default function App() {
 
         <div className="flex items-center space-x-2">
           {/* Persona Switcher Dropdown */}
-          <div className="relative">
+          <div className="relative" ref={personaMenuRef}>
             <button
               onClick={() => setPersonaMenuOpen((prev) => !prev)}
               className="flex items-center space-x-2 px-2.5 py-1.5 text-xs rounded-lg bg-slate-700/60 hover:bg-slate-700 border border-slate-600/60 transition-colors"
@@ -311,55 +338,49 @@ export default function App() {
             </button>
 
             {personaMenuOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setPersonaMenuOpen(false)}
-                />
-                <div className="absolute right-0 mt-1 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
-                  <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 border-b border-slate-700/60 uppercase tracking-wider flex items-center justify-between">
-                    <span>切换模拟身份 (RBAC)</span>
-                    <UserCheck className="w-3 h-3 text-cyan-400" />
-                  </div>
-                  {employees.map((emp) => {
-                    const isSelected = emp.id === currentEmployee.id;
-                    const isManager = emp.level.startsWith('M');
-                    const isHR = emp.department.includes('人力');
-                    return (
-                      <button
-                        key={emp.id}
-                        onClick={() => handleSwitchPersona(emp)}
-                        className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors ${
-                          isSelected
-                            ? 'bg-blue-600/20 text-blue-300 font-medium'
-                            : 'hover:bg-slate-700/60 text-slate-300'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center space-x-1.5">
-                            <span>{emp.name}</span>
-                            <span className="text-[10px] text-slate-400">({emp.id})</span>
-                            {isManager && (
-                              <span className="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
-                                主管
-                              </span>
-                            )}
-                            {isHR && (
-                              <span className="text-[9px] px-1 py-0.2 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded">
-                                HRBP
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">
-                            {emp.department} · {emp.position}
-                          </div>
-                        </div>
-                        {isSelected && <span className="text-blue-400 text-xs">✓</span>}
-                      </button>
-                    );
-                  })}
+              <div className="absolute right-0 mt-1 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-50 py-1 overflow-hidden">
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 border-b border-slate-700/60 uppercase tracking-wider flex items-center justify-between">
+                  <span>切换模拟身份 (RBAC)</span>
+                  <UserCheck className="w-3 h-3 text-cyan-400" />
                 </div>
-              </>
+                {employees.map((emp) => {
+                  const isSelected = emp.id === currentEmployee.id;
+                  const isManager = emp.level.startsWith('M');
+                  const isHR = emp.department.includes('人力');
+                  return (
+                    <button
+                      key={emp.id}
+                      onClick={() => handleSwitchPersona(emp)}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors ${
+                        isSelected
+                          ? 'bg-blue-600/20 text-blue-300 font-medium'
+                          : 'hover:bg-slate-700/60 text-slate-300'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center space-x-1.5">
+                          <span>{emp.name}</span>
+                          <span className="text-[10px] text-slate-400">({emp.id})</span>
+                          {isManager && (
+                            <span className="text-[9px] px-1 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+                              主管
+                            </span>
+                          )}
+                          {isHR && (
+                            <span className="text-[9px] px-1 py-0.2 bg-purple-500/20 text-purple-300 border border-purple-500/30 rounded">
+                              HRBP
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {emp.department} · {emp.position}
+                        </div>
+                      </div>
+                      {isSelected && <span className="text-blue-400 text-xs">✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
 

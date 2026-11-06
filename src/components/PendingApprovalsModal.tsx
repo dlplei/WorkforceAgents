@@ -462,6 +462,15 @@ export default function PendingApprovalsModal({
                         <span className="text-slate-200 italic">{reason}</span>
                       </div>
                     )}
+                    {item.comment && (
+                      <div className="col-span-2 flex items-start space-x-1.5 text-xs text-amber-300/95 bg-amber-500/10 border border-amber-500/20 rounded px-2.5 py-1.5 mt-1">
+                        <CheckCheck className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                        <div>
+                          <span className="font-semibold text-amber-300">流转节点意见: </span>
+                          <span className="text-amber-200/90">{item.comment}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Actions or Resolved Audit Receipt */}

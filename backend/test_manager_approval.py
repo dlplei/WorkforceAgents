@@ -53,7 +53,7 @@ class TestManagerApproval(unittest.TestCase):
         pending = res.json()
         self.assertIsInstance(pending, list)
         self.assertGreaterEqual(len(pending), 1)
-        target = pending[0]
+        target = next((p for p in pending if p.get("id") == "APR-001"), pending[0])
         app_id = target["id"]
 
         # 记录张明当前的年假余额

@@ -290,6 +290,12 @@ def init_db() -> bool:
                         UPDATE approvals
                         SET action_date = COALESCE(NULLIF(action_date, ''), request_date, '2026-05-15')
                         WHERE status IN ('approved', 'rejected') AND (action_date IS NULL OR action_date = '');
+                        -- 修复 EXP-977 报销流转状态：直属主管李伟审批后流转至财务专员陈敏复核
+                        UPDATE approvals
+                        SET status = 'pending',
+                            approver = '陈敏 (财务复核)',
+                            comment = '直属主管[李伟]审批通过：同意报销申请，费用明细合规，已流转至财务专员【陈敏】复核'
+                        WHERE id = 'EXP-977' AND (approver = '李伟' OR status = 'approved');
                         """
                     )
                     conn.commit()
@@ -808,32 +814,58 @@ def deduct_leave_balance(employee_id: str, leave_type: str = "annual", days: flo
 
 
 def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[str, Any]]:
-    """查询等待该主管（或管理员/HRBP）审批的单据列表"""
+    """查询等待当前节点审批人处理的待办单据"""
     manager_name = manager_name_or_id
     if manager_name_or_id.startswith("E") or manager_name_or_id.startswith("M"):
         emp = get_employee(manager_name_or_id)
         if emp:
             manager_name = emp.name
 
+    is_finance = manager_name == "陈敏" or manager_name_or_id in ("E10501", "陈敏") or "财务" in manager_name
+    is_hrbp = manager_name == "王芳" or manager_name_or_id in ("E10456", "王芳") or "HR" in manager_name
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                if manager_name in ("王芳", "陈敏") or manager_name_or_id in ("E10456", "E10501"):
+                if is_finance:
                     cur.execute(
                         """
-                        SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver
+                        SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver, comment, action_date
                         FROM approvals
                         WHERE status IN ('pending', '待审批')
+                          AND (approval_type IN ('差旅报销', '费用报销') OR id LIKE 'EXP-%')
+                          AND (approver LIKE '%%陈敏%%' OR approver LIKE '%%财务%%')
+                          AND (
+                            (approver NOT LIKE '%%主管%%' AND approver NOT LIKE '%%李伟%%')
+                            OR (COALESCE(comment, '') LIKE '%%审批通过%%' OR COALESCE(comment, '') LIKE '%%直属主管%%')
+                          )
+                        ORDER BY request_date DESC;
+                        """
+                    )
+                elif is_hrbp:
+                    cur.execute(
+                        """
+                        SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver, comment, action_date
+                        FROM approvals
+                        WHERE status IN ('pending', '待审批')
+                          AND (approval_type IN ('转岗调动') OR id LIKE 'TRF-%')
+                          AND (approver LIKE '%%王芳%%' OR approver LIKE '%%HRBP%%')
+                          AND (
+                            (approver NOT LIKE '%%主管%%' AND approver NOT LIKE '%%李伟%%')
+                            OR (COALESCE(comment, '') LIKE '%%审批通过%%' OR COALESCE(comment, '') LIKE '%%转出主管%%')
+                          )
                         ORDER BY request_date DESC;
                         """
                     )
                 else:
                     cur.execute(
                         """
-                        SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver
+                        SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver, comment, action_date
                         FROM approvals
                         WHERE status IN ('pending', '待审批')
                           AND (approver = %s OR approver = %s OR approver LIKE %s)
+                          AND COALESCE(comment, '') NOT LIKE '%%直属主管%%审批通过%%'
+                          AND COALESCE(comment, '') NOT LIKE '%%转出主管%%审批通过%%'
                         ORDER BY request_date DESC;
                         """,
                         (manager_name, manager_name_or_id, f"%{manager_name}%")
@@ -844,14 +876,39 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
     except Exception:
         pass
 
-    results = [
-        a for a in _in_memory_approvals
-        if a.get("status") in ("pending", "待审批")
-    ]
-    if manager_name != "王芳" and manager_name_or_id != "E10456":
+    results = [a for a in _in_memory_approvals if a.get("status") in ("pending", "待审批")]
+    if is_finance:
         results = [
             a for a in results
-            if (manager_name in (a.get("approver") or "")) or (manager_name_or_id in (a.get("approver") or ""))
+            if (a.get("approval_type") in ("差旅报销", "费用报销") or str(a.get("id", "")).startswith("EXP-"))
+            and ("陈敏" in (a.get("approver") or "") or "财务" in (a.get("approver") or ""))
+            and (
+                ("主管" not in (a.get("approver") or "") and "李伟" not in (a.get("approver") or ""))
+                or ("审批通过" in (a.get("comment") or "") or "直属主管" in (a.get("comment") or ""))
+            )
+        ]
+    elif is_hrbp:
+        results = [
+            a for a in results
+            if (a.get("approval_type") in ("转岗调动",) or str(a.get("id", "")).startswith("TRF-"))
+            and ("王芳" in (a.get("approver") or "") or "HRBP" in (a.get("approver") or ""))
+            and (
+                ("主管" not in (a.get("approver") or "") and "李伟" not in (a.get("approver") or ""))
+                or ("审批通过" in (a.get("comment") or "") or "转出主管" in (a.get("comment") or ""))
+            )
+        ]
+    else:
+        results = [
+            a for a in results
+            if ((manager_name in (a.get("approver") or "")) or (manager_name_or_id in (a.get("approver") or "")))
+            and not (
+                ("陈敏" in (a.get("approver") or "") or "财务" in (a.get("approver") or ""))
+                and ("主管" not in (a.get("approver") or "") and "李伟" not in (a.get("approver") or "") or "直属主管" in (a.get("comment") or ""))
+            )
+            and not (
+                ("王芳" in (a.get("approver") or "") or "HRBP" in (a.get("approver") or ""))
+                and ("主管" not in (a.get("approver") or "") and "李伟" not in (a.get("approver") or "") or "转出主管" in (a.get("comment") or ""))
+            )
         ]
     return sanitize_db_output(results)
 
@@ -946,6 +1003,56 @@ def update_approval_status(
 
     action_today = datetime.now().strftime("%Y-%m-%d")
     final_comment = comment or ("审批通过" if norm_decision == "approved" else "审批驳回")
+
+    curr_approver_str = str((curr_approval or {}).get("approver") or "")
+    app_type = str((curr_approval or {}).get("approval_type") or (curr_approval or {}).get("type") or "")
+    is_expense = approval_id.startswith("EXP-") or any(k in app_type for k in ["报销", "费用"]) or ("财务" in curr_approver_str) or ("陈敏" in curr_approver_str)
+    is_transfer = approval_id.startswith("TRF-") or any(k in app_type for k in ["转岗", "调动"]) or ("HRBP" in curr_approver_str) or ("王芳" in curr_approver_str and "转出" in curr_approver_str)
+    is_finance_actor = (manager_name == "陈敏" or approver_name_or_id in ("E10501", "陈敏") or "财务" in manager_name)
+    is_hrbp_actor = (manager_name == "王芳" or approver_name_or_id in ("E10456", "王芳") or "HR" in manager_name)
+
+    next_status = norm_decision
+    next_approver = manager_name
+    next_comment = final_comment
+    result_message = f"审批单 {approval_id} 已成功判定为【{'已通过' if norm_decision == 'approved' else '已驳回'}】"
+
+    if is_expense:
+        if norm_decision == "rejected":
+            next_status = "rejected"
+            role_label = "财务专员" if is_finance_actor else "直属主管"
+            next_approver = f"{manager_name} ({role_label}-已驳回)"
+            next_comment = f"{role_label}[{manager_name}]审批驳回：{final_comment}"
+            result_message = f"报销申请 {approval_id} 已被{role_label}【{manager_name}】驳回。"
+        elif not is_finance_actor:
+            next_status = "pending"
+            next_approver = "陈敏 (财务复核)"
+            next_comment = f"直属主管[{manager_name}]审批通过：{final_comment}，已流转至财务专员【陈敏】复核"
+            result_message = f"报销申请 {approval_id} 直属主管审批通过，已成功流转至财务专员【陈敏】复核。"
+        else:
+            next_status = "approved"
+            next_approver = f"{manager_name} (财务复核)"
+            prev_com = (curr_approval or {}).get("comment")
+            next_comment = f"{prev_com} | 财务复核[{manager_name}]通过：{final_comment}" if prev_com else f"财务复核[{manager_name}]通过：{final_comment}"
+            result_message = f"报销申请 {approval_id} 财务复核通过，报销款项准予核销发放。"
+    elif is_transfer:
+        if norm_decision == "rejected":
+            next_status = "rejected"
+            role_label = "HRBP" if is_hrbp_actor else "直属主管"
+            next_approver = f"{manager_name} ({role_label}-已驳回)"
+            next_comment = f"{role_label}[{manager_name}]审批驳回：{final_comment}"
+            result_message = f"转岗申请 {approval_id} 已被{role_label}【{manager_name}】驳回。"
+        elif not is_hrbp_actor:
+            next_status = "pending"
+            next_approver = "王芳 (HRBP)"
+            next_comment = f"转出主管[{manager_name}]审批通过：{final_comment}，已流转至HRBP【王芳】办理"
+            result_message = f"转岗申请 {approval_id} 主管审批通过，已成功流转至HRBP【王芳】办理。"
+        else:
+            next_status = "approved"
+            next_approver = f"{manager_name} (HRBP)"
+            prev_com = (curr_approval or {}).get("comment")
+            next_comment = f"{prev_com} | HRBP[{manager_name}]办理通过：{final_comment}" if prev_com else f"HRBP[{manager_name}]办理通过：{final_comment}"
+            result_message = f"转岗申请 {approval_id} HRBP办理通过，人事调动生效。"
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -957,7 +1064,7 @@ def update_approval_status(
                         WHERE id = %s
                         RETURNING id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver, comment, action_date;
                         """,
-                        (norm_decision, manager_name, final_comment, action_today, approval_id)
+                        (next_status, next_approver, next_comment, action_today, approval_id)
                     )
                     row = cur.fetchone()
                 except Exception:
@@ -969,7 +1076,7 @@ def update_approval_status(
                         WHERE id = %s
                         RETURNING id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver;
                         """,
-                        (norm_decision, manager_name, approval_id)
+                        (next_status, next_approver, approval_id)
                     )
                     row = cur.fetchone()
                 if row:
@@ -983,23 +1090,23 @@ def update_approval_status(
             "id": approval_id,
             "employee_id": DEFAULT_EMPLOYEE_ID,
             "applicant": "张明",
-            "type": "年假申请",
-            "approval_type": "年假申请",
-            "status": norm_decision,
+            "type": app_type or "年假申请",
+            "approval_type": app_type or "年假申请",
+            "status": next_status,
             "date": "2026-05-15",
             "request_date": "2026-05-15",
             "start_date": "2026-06-01",
             "end_date": "2026-06-02",
-            "reason": "年假调休",
-            "approver": manager_name,
-            "comment": final_comment,
+            "reason": "审批事项",
+            "approver": next_approver,
+            "comment": next_comment,
             "action_date": action_today,
         }
         _in_memory_approvals.append(target)
     else:
-        target["status"] = norm_decision
-        target["approver"] = manager_name
-        target["comment"] = final_comment
+        target["status"] = next_status
+        target["approver"] = next_approver
+        target["comment"] = next_comment
         target["action_date"] = action_today
         if target_idx >= 0:
             _in_memory_approvals[target_idx] = dict(target)
@@ -1007,44 +1114,45 @@ def update_approval_status(
             _in_memory_approvals.append(dict(target))
 
     deducted_balance = None
-    if norm_decision == "approved":
+    if next_status == "approved":
         applicant_id = target.get("employee_id") or DEFAULT_EMPLOYEE_ID
         app_type = target.get("approval_type") or target.get("type", "年假")
-        
-        calc_days = 2.0
-        s_date = target.get("start_date")
-        e_date = target.get("end_date")
-        if s_date and e_date:
+        leave_keywords = ("annual", "sick", "personal", "marriage", "maternity", "假")
+        if any(k in str(app_type).lower() for k in leave_keywords):
+            calc_days = 2.0
+            s_date = target.get("start_date")
+            e_date = target.get("end_date")
+            if s_date and e_date:
+                try:
+                    from datetime import datetime as dt
+                    d1 = dt.strptime(s_date, "%Y-%m-%d")
+                    d2 = dt.strptime(e_date, "%Y-%m-%d")
+                    calc_days = max(1.0, float((d2 - d1).days + 1))
+                except Exception:
+                    calc_days = 2.0
+
+            deducted_balance = deduct_leave_balance(applicant_id, app_type, calc_days)
+
             try:
-                from datetime import datetime as dt
-                d1 = dt.strptime(s_date, "%Y-%m-%d")
-                d2 = dt.strptime(e_date, "%Y-%m-%d")
-                calc_days = max(1.0, float((d2 - d1).days + 1))
+                with get_db_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO calendar_events (employee_id, event_date, title, event_type)
+                            VALUES (%s, %s, %s, 'holiday')
+                            ON CONFLICT DO NOTHING;
+                            """,
+                            (applicant_id, s_date or "2026-06-01", f"请假({app_type}) - {target.get('applicant')}")
+                        )
+                        conn.commit()
             except Exception:
-                calc_days = 2.0
-
-        deducted_balance = deduct_leave_balance(applicant_id, app_type, calc_days)
-
-        try:
-            with get_db_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO calendar_events (employee_id, event_date, title, event_type)
-                        VALUES (%s, %s, %s, 'holiday')
-                        ON CONFLICT DO NOTHING;
-                        """,
-                        (applicant_id, s_date or "2026-06-01", f"请假({app_type}) - {target.get('applicant')}")
-                    )
-                    conn.commit()
-        except Exception:
-            pass
+                pass
 
     return sanitize_db_output({
         "success": True,
         "approval": target,
         "leave_balance_deducted": deducted_balance,
-        "message": f"审批单 {approval_id} 已成功判定为【{'已通过' if norm_decision == 'approved' else '已驳回'}】"
+        "message": result_message
     })
 
 

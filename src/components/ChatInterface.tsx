@@ -338,7 +338,7 @@ export default function ChatInterface({
         setCurrentToolResults([]);
         setCurrentHitlRequest(null);
         const hasApprovalOrLeaveTool = toolCallsRef.current.some(tc => 
-          ['review_approval_request', 'submit_leave_request', 'submit_travel_request', 'submit_transfer_request', 'process_approval'].includes(tc.name)
+          ['review_approval_request', 'submit_leave_request', 'submit_travel_request', 'submit_transfer_request', 'submit_expense_claim', 'process_approval'].includes(tc.name)
         );
         if (hasApprovalOrLeaveTool) {
           onActionCompleted?.();

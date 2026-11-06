@@ -73,7 +73,7 @@ class HitlActionRequest(BaseModel):
     tool_name: str
     tool_call_id: Optional[str] = None
     title: str
-    category: Literal["leave", "document", "ticket", "travel", "transfer", "general"] = "general"
+    category: Literal["leave", "document", "ticket", "travel", "transfer", "expense", "general"] = "general"
     summary: Dict[str, Any] = Field(default_factory=dict)
     raw_arguments: Dict[str, Any] = Field(default_factory=dict)
     status: Literal["pending", "approved", "rejected"] = "pending"

@@ -42,7 +42,7 @@ export interface HitlActionRequest {
   tool_name: string;
   tool_call_id?: string;
   title: string;
-  category: 'leave' | 'document' | 'ticket' | 'travel' | 'transfer' | 'general';
+  category: 'leave' | 'document' | 'ticket' | 'travel' | 'transfer' | 'expense' | 'general';
   summary: Record<string, string | number>;
   raw_arguments: Record<string, unknown>;
   status: 'pending' | 'approved' | 'rejected';

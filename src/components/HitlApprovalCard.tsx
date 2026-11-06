@@ -3,7 +3,7 @@ import {
   ShieldAlert, ShieldCheck, Ban, CheckCircle2,
   Calendar, FileText, Ticket, Clock,
   Loader2, Edit3, HelpCircle, AlertTriangle,
-  Plane, ArrowRightLeft
+  Plane, ArrowRightLeft, Receipt
 } from 'lucide-react';
 import type { HitlActionRequest } from '../types';
 
@@ -32,6 +32,7 @@ export default function HitlApprovalCard({
     if (cat === 'leave') return <Calendar className="w-4 h-4 text-amber-400" />;
     if (cat === 'travel') return <Plane className="w-4 h-4 text-sky-400" />;
     if (cat === 'transfer') return <ArrowRightLeft className="w-4 h-4 text-emerald-400" />;
+    if (cat === 'expense') return <Receipt className="w-4 h-4 text-emerald-400" />;
     if (cat === 'document') return <FileText className="w-4 h-4 text-blue-400" />;
     if (cat === 'ticket') return <Ticket className="w-4 h-4 text-purple-400" />;
     return <HelpCircle className="w-4 h-4 text-cyan-400" />;

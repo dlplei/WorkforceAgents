@@ -52,6 +52,10 @@ WRITE_ACTION_INVALIDATION_MAP = {
         "tools": {"query_approval_status", "get_employee_profile"},
         "keywords": ["调动", "转岗", "transfer", "部门", "审批"],
     },
+    "submit_expense_claim": {
+        "tools": {"query_approval_status", "calculate_travel_budget"},
+        "keywords": ["报销", "费用", "差旅报销", "发票", "expense", "审批"],
+    },
     "create_service_ticket": {
         "tools": {"query_approval_status"},
         "keywords": ["工单", "审批", "ticket", "报销", "IT支持"],

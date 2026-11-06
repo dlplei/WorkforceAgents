@@ -76,6 +76,30 @@ class IHRServiceAdapter(ABC):
         pass
 
     @abstractmethod
+    def submit_expense_claim(
+        self,
+        employee_id: str,
+        applicant: str,
+        amount: float,
+        category: str = "差旅报销",
+        description: str = "",
+        invoice_count: int = 1,
+        travel_request_id: Optional[str] = None,
+        approver: str = "李伟"
+    ) -> Dict[str, Any]:
+        """提交费用与差旅报销申请"""
+        pass
+
+    @abstractmethod
+    def query_org_chart(
+        self,
+        employee_name_or_id: Optional[str] = None,
+        query_type: str = "full"
+    ) -> Dict[str, Any]:
+        """查询组织架构与汇报线关系"""
+        pass
+
+    @abstractmethod
     def get_approvals(self, employee_id: str, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """查询审批流状态"""
         pass
@@ -211,6 +235,38 @@ class LocalPostgresAdapter(IHRServiceAdapter):
             approver=approver
         )
         return approval
+
+    def submit_expense_claim(
+        self,
+        employee_id: str,
+        applicant: str,
+        amount: float,
+        category: str = "差旅报销",
+        description: str = "",
+        invoice_count: int = 1,
+        travel_request_id: Optional[str] = None,
+        approver: str = "李伟"
+    ) -> Dict[str, Any]:
+        return database.submit_expense_claim(
+            employee_id=employee_id,
+            applicant=applicant,
+            amount=amount,
+            category=category,
+            description=description,
+            invoice_count=invoice_count,
+            travel_request_id=travel_request_id,
+            approver=approver
+        )
+
+    def query_org_chart(
+        self,
+        employee_name_or_id: Optional[str] = None,
+        query_type: str = "full"
+    ) -> Dict[str, Any]:
+        return database.query_org_chart(
+            employee_name_or_id=employee_name_or_id,
+            query_type=query_type
+        )
 
     def get_approvals(
         self,
@@ -359,6 +415,38 @@ class ServiceNowAdapter(IHRServiceAdapter):
             effective_date=effective_date,
             reason=reason,
             approver=approver,
+        )
+
+    def submit_expense_claim(
+        self,
+        employee_id: str,
+        applicant: str,
+        amount: float,
+        category: str = "差旅报销",
+        description: str = "",
+        invoice_count: int = 1,
+        travel_request_id: Optional[str] = None,
+        approver: str = "李伟"
+    ) -> Dict[str, Any]:
+        return self.local_backup.submit_expense_claim(
+            employee_id=employee_id,
+            applicant=applicant,
+            amount=amount,
+            category=category,
+            description=description,
+            invoice_count=invoice_count,
+            travel_request_id=travel_request_id,
+            approver=approver,
+        )
+
+    def query_org_chart(
+        self,
+        employee_name_or_id: Optional[str] = None,
+        query_type: str = "full"
+    ) -> Dict[str, Any]:
+        return self.local_backup.query_org_chart(
+            employee_name_or_id=employee_name_or_id,
+            query_type=query_type
         )
 
     def get_approvals(self, employee_id: str, request_id: Optional[str] = None) -> List[Dict[str, Any]]:

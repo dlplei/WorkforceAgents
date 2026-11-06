@@ -132,7 +132,7 @@ def _init_default_metrics() -> None:
         for reason in ("injection", "off_topic"):
             MET_GUARDRAIL_BLOCKS.labels(reason=reason, check_type="l1_regex").inc(0)
         for hitl_ev in ("triggered", "approved", "rejected"):
-            for t_name in ("submit_leave_request", "submit_travel_request", "submit_transfer_request", "generate_document", "create_hr_ticket"):
+            for t_name in ("submit_leave_request", "submit_travel_request", "submit_transfer_request", "submit_expense_claim", "generate_document", "create_hr_ticket"):
                 MET_HITL_EVENTS.labels(event=hitl_ev, tool_name=t_name).inc(0)
     except Exception as e:
         logger.debug(f"Metrics zero-init note: {e}")

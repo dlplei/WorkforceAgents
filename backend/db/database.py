@@ -4,6 +4,7 @@ PostgreSQL 数据库交互层
 """
 import os
 import json
+import random
 import decimal
 from datetime import date, datetime
 import contextvars
@@ -62,18 +63,18 @@ def sanitize_db_output(val: Any) -> Any:
 
 
 MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
-    "E10293": EmployeeProfile(
-        id="E10293",
-        name="张明",
-        department="技术研发部",
-        position="高级前端工程师",
-        level="P6",
+    "E10000": EmployeeProfile(
+        id="E10000",
+        name="赵静",
+        department="管理层",
+        position="研发副总裁 / VP",
+        level="M2",
         location="北京",
-        manager="李伟",
-        hire_date="2022-03-15",
+        manager="",
+        hire_date="2018-01-15",
         contract_type="全职",
-        leave_balance=LeaveBalance(annual=7, sick=5, personal=2),
-        benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+        leave_balance=LeaveBalance(annual=20, sick=10, personal=5),
+        benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"],
     ),
     "E10001": EmployeeProfile(
         id="E10001",
@@ -88,6 +89,32 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         leave_balance=LeaveBalance(annual=15, sick=10, personal=5),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"],
     ),
+    "E10293": EmployeeProfile(
+        id="E10293",
+        name="张明",
+        department="技术研发部",
+        position="高级前端工程师",
+        level="P6",
+        location="北京",
+        manager="李伟",
+        hire_date="2022-03-15",
+        contract_type="全职",
+        leave_balance=LeaveBalance(annual=7, sick=5, personal=2),
+        benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+    ),
+    "E10301": EmployeeProfile(
+        id="E10301",
+        name="钱浩",
+        department="技术研发部",
+        position="资深后端工程师",
+        level="P6",
+        location="北京",
+        manager="李伟",
+        hire_date="2021-11-01",
+        contract_type="全职",
+        leave_balance=LeaveBalance(annual=8, sick=5, personal=3),
+        benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+    ),
     "E10456": EmployeeProfile(
         id="E10456",
         name="王芳",
@@ -100,6 +127,19 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=12, sick=8, personal=3),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"],
+    ),
+    "E10401": EmployeeProfile(
+        id="E10401",
+        name="刘洋",
+        department="人力资源部",
+        position="招聘与员工关系专员",
+        level="P5",
+        location="上海",
+        manager="王芳",
+        hire_date="2023-04-10",
+        contract_type="全职",
+        leave_balance=LeaveBalance(annual=5, sick=5, personal=1),
+        benefits=["五险一金", "补充商业保险", "年度体检"],
     ),
 }
 
@@ -1341,4 +1381,171 @@ def get_recent_chat_messages(
         results = [m for m in results if m.get("session_id") == session_id]
     results.sort(key=lambda x: str(x.get("created_at") or ""))
     return sanitize_db_output(results[-limit:])
+
+
+
+# ============ 费用报销与组织架构 (Expense Claim & Org Chart) ============
+
+def submit_expense_claim(
+    employee_id: str,
+    applicant: str,
+    amount: float,
+    category: str = "差旅报销",
+    description: str = "",
+    invoice_count: int = 1,
+    travel_request_id: Optional[str] = None,
+    approver: str = "李伟"
+) -> Dict[str, Any]:
+    """提交费用报销申请并持久化至审批流"""
+    req_id = f"EXP-{random.randint(100, 999)}"
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    detail_reason = (
+        f"报销类别: {category} | 金额: ¥{float(amount):.2f} | 发票: {invoice_count}张 | "
+        f"事由说明: {description}"
+        f"{f' | 关联出差单号: {travel_request_id}' if travel_request_id else ''}"
+    )
+    approval_type = "差旅报销" if any(k in category for k in ["差旅", "出差", "travel"]) else "费用报销"
+    
+    return create_approval(
+        approval_id=req_id,
+        employee_id=employee_id,
+        applicant=applicant,
+        approval_type=approval_type,
+        status="pending",
+        request_date=today_str,
+        start_date=today_str,
+        end_date=today_str,
+        reason=detail_reason,
+        approver=approver
+    )
+
+
+def query_org_chart(
+    employee_name_or_id: Optional[str] = None,
+    query_type: str = "full"
+) -> Dict[str, Any]:
+    """
+    查询企业组织架构与汇报链关系：
+    - query_type='reporting_line': 汇报链关系（上级与隔级汇报链）
+    - query_type='team_members': 直属下属与同组团队成员
+    - query_type='department_overview': 部门架构概况
+    - query_type='full': 综合上下级、对口 HRBP 与同组全貌
+    """
+    all_emps = get_all_employees()
+    emp_map_by_id = {e.id: e for e in all_emps}
+    emp_map_by_name = {e.name: e for e in all_emps}
+    
+    # 定位目标员工
+    target_emp = None
+    target_query = (employee_name_or_id or "").strip()
+    if target_query:
+        if target_query in emp_map_by_id:
+            target_emp = emp_map_by_id[target_query]
+        elif target_query in emp_map_by_name:
+            target_emp = emp_map_by_name[target_query]
+        else:
+            for e in all_emps:
+                if target_query in e.name or target_query in e.id:
+                    target_emp = e
+                    break
+    
+    if not target_emp:
+        curr_id = get_current_employee_id()
+        target_emp = emp_map_by_id.get(curr_id) or emp_map_by_name.get("张明")
+    
+    if not target_emp:
+        target_emp = all_emps[0]
+
+    # 1. 构建向上汇报链 (Reporting Line)
+    reporting_chain = []
+    curr = target_emp
+    visited = set()
+    order = 1
+    while curr and curr.id not in visited:
+        visited.add(curr.id)
+        relation_label = "本人" if order == 1 else ("直属主管" if order == 2 else "隔级主管/高管")
+        reporting_chain.append({
+            "order": order,
+            "relation": relation_label,
+            "id": curr.id,
+            "name": curr.name,
+            "position": curr.position,
+            "level": curr.level,
+            "department": curr.department,
+            "location": curr.location,
+        })
+        order += 1
+        mgr_name = curr.manager
+        if not mgr_name:
+            break
+        curr = emp_map_by_name.get(mgr_name)
+    
+    # 2. 查找直属下属 (Direct Reports)
+    direct_reports = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "position": e.position,
+            "level": e.level,
+            "department": e.department,
+            "location": e.location,
+        }
+        for e in all_emps
+        if e.manager == target_emp.name and e.id != target_emp.id
+    ]
+
+    # 3. 查找同部门团队成员 (Team / Peers)
+    team_members = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "position": e.position,
+            "level": e.level,
+            "location": e.location,
+            "is_direct_peer": e.manager == target_emp.manager,
+        }
+        for e in all_emps
+        if e.department == target_emp.department and e.id != target_emp.id
+    ]
+
+    # 4. 查找对口 HRBP
+    hrbp_info = None
+    for e in all_emps:
+        if "hrbp" in e.position.lower() or "hrbp" in e.level.lower() or e.name == "王芳":
+            hrbp_info = {
+                "id": e.id,
+                "name": e.name,
+                "position": e.position,
+                "department": e.department,
+                "location": e.location,
+            }
+            break
+
+    # 5. 生成结构化简述
+    mgr_str = target_emp.manager or "无 (公司最高管理层)"
+    reps_str = ", ".join([r["name"] for r in direct_reports]) if direct_reports else "暂无直接下属"
+    peers_str = ", ".join([m["name"] for m in team_members[:3]]) if team_members else "暂无其他同组同事"
+    hrbp_str = f"{hrbp_info['name']} ({hrbp_info['position']})" if hrbp_info else "王芳 (HRBP)"
+
+    summary = (
+        f"【{target_emp.name}】隶属于【{target_emp.department}】，职级职位为 {target_emp.position} ({target_emp.level})，常驻 {target_emp.location}。"
+        f"直属上级主管为【{mgr_str}】。直属下属：{reps_str}。对口 HRBP 为【{hrbp_str}】。"
+    )
+
+    return sanitize_db_output({
+        "target_employee": {
+            "id": target_emp.id,
+            "name": target_emp.name,
+            "department": target_emp.department,
+            "position": target_emp.position,
+            "level": target_emp.level,
+            "location": target_emp.location,
+            "manager": target_emp.manager,
+        },
+        "reporting_line": reporting_chain,
+        "direct_reports": direct_reports,
+        "team_members": team_members,
+        "hrbp": hrbp_info,
+        "summary": summary
+    })
 

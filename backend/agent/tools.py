@@ -957,6 +957,111 @@ registry.register(
     handler=handle_submit_transfer_request,
 )
 
+async def handle_submit_expense_claim(params: dict) -> dict:
+    """处理员工费用与差旅报销申请提交"""
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
+    emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+    emp_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name", "张明")
+    emp_mgr = getattr(emp, "manager", None) or (emp.get("manager") if isinstance(emp, dict) else "李伟")
+
+    amount = params.get("amount")
+    category = params.get("category", "差旅报销")
+    description = params.get("description", "")
+    invoice_count = params.get("invoice_count", 1)
+    travel_request_id = params.get("travel_request_id")
+
+    try:
+        amt = float(amount)
+        if amt <= 0:
+            return {"success": False, "error": "报销金额必须大于 0 元"}
+    except (ValueError, TypeError):
+        return {"success": False, "error": "报销金额格式不合法，请输入有效数字"}
+
+    inv_cnt = max(1, int(invoice_count or 1))
+
+    approval = adapter.submit_expense_claim(
+        employee_id=emp_id,
+        applicant=emp_name,
+        amount=amt,
+        category=category,
+        description=description,
+        invoice_count=inv_cnt,
+        travel_request_id=travel_request_id,
+        approver=emp_mgr
+    )
+
+    return {
+        "success": True,
+        "data": {
+            "status": "submitted",
+            "approval_id": approval.get("id"),
+            "approval_type": approval.get("approval_type", "差旅报销"),
+            "applicant": emp_name,
+            "amount": amt,
+            "category": category,
+            "invoice_count": inv_cnt,
+            "travel_request_id": travel_request_id,
+            "approver": emp_mgr,
+            "current_status": "pending",
+            "message": f"费用报销申请【{approval.get('id')}】已成功提报！金额 ¥{amt:.2f}，已流转至直属主管【{emp_mgr}】审批及财务复核。"
+        }
+    }
+
+
+async def handle_query_org_chart(params: dict) -> dict:
+    """处理组织架构与汇报链关系查询"""
+    adapter = get_hr_adapter()
+    employee_name_or_id = params.get("employee_name_or_id")
+    query_type = params.get("query_type", "full")
+    chart = adapter.query_org_chart(
+        employee_name_or_id=employee_name_or_id,
+        query_type=query_type
+    )
+    return {
+        "success": True,
+        "data": chart
+    }
+
+
+registry.register(
+    name="submit_expense_claim",
+    description="提交差旅或日常费用报销申请（如差旅交通、住宿、餐费、培训认证考试等报销）。这是一个涉及财务支出的确认操作（HITL），会创建审批流程。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "amount": {"type": "number", "description": "报销总金额（元，必须大于0）"},
+            "category": {"type": "string", "description": "报销类别（如：差旅报销、日常报销、培训认证报销），默认为差旅报销"},
+            "description": {"type": "string", "description": "费用产生事由及明细说明（如：上海客户支持往返交通与住宿费）"},
+            "invoice_count": {"type": "integer", "description": "随附发票或凭证张数，默认为 1"},
+            "travel_request_id": {"type": "string", "description": "关联的出差预申请审批单号（如 TRV-123，若无则留空）"},
+        },
+        "required": ["amount", "description"],
+    },
+    category="action",
+    permission_level="confirmation",
+    handler=handle_submit_expense_claim,
+)
+
+registry.register(
+    name="query_org_chart",
+    description="查询企业组织架构与汇报链关系。可查询指定员工或当前员工的直属主管、向上汇报链条、直接下属、同部门同事以及对口 HRBP 信息。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "employee_name_or_id": {"type": "string", "description": "员工姓名或工号（如'张明'、'李伟'、'E10293'），默认查询当前登录员工"},
+            "query_type": {
+                "type": "string",
+                "enum": ["full", "reporting_line", "team_members", "department_overview"],
+                "description": "查询类型：'full' 综合信息，'reporting_line' 汇报线，'team_members' 团队成员及下属，'department_overview' 部门结构",
+            },
+        },
+    },
+    category="query",
+    permission_level="readonly",
+    handler=handle_query_org_chart,
+)
+
 
 
 # ============ HITL 辅助构建器 ============
@@ -1158,6 +1263,35 @@ def build_hitl_action_request(
             risk_level="high",
             created_at=ts,
         )
+    elif tool_name == "submit_expense_claim":
+        amount = float(arguments.get("amount") or 0.0)
+        category = arguments.get("category", "差旅报销")
+        description = arguments.get("description", "业务差旅费用报销")
+        invoice_count = int(arguments.get("invoice_count") or 1)
+        travel_req_id = arguments.get("travel_request_id")
+
+        return HitlActionRequest(
+            action_id=action_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            title="员工费用与差旅报销提报核实 (HITL)",
+            category="expense",
+            summary={
+                "报销员工": f"{emp_name} ({emp_id})",
+                "报销类别": category,
+                "报销总金额": f"¥{amount:.2f}",
+                "发票凭据": f"{invoice_count} 张 (须为正规合规税务发票)",
+                "费用事由": description,
+                "关联出差审批": travel_req_id if travel_req_id else "无 (非关联合并出差)",
+                "政策合规提示": "按《POL-003》出差结束后5个工作日内报销，超标部分需事先审批",
+                "流转审批人": f"直属主管【{emp_mgr}】审核与财务核验",
+            },
+            raw_arguments=arguments,
+            status="pending",
+            risk_level="medium",
+            created_at=ts,
+        )
+
 
     # 兜底通用 HITL 动作
     return HitlActionRequest(

@@ -41,12 +41,24 @@ DOCUMENT_GEN_TOOLS = {
 # 写操作主动失效规则（Evict-on-Write）
 WRITE_ACTION_INVALIDATION_MAP = {
     "submit_leave_request": {
-        "tools": {"query_leave_balance"},
+        "tools": {"query_leave_balance", "query_approval_status", "check_calendar"},
         "keywords": ["年假", "假", "余额", "leave", "休假", "请假"],
+    },
+    "submit_travel_request": {
+        "tools": {"query_approval_status", "check_calendar", "calculate_travel_budget"},
+        "keywords": ["差旅", "出差", "travel", "报销", "审批", "预算"],
+    },
+    "submit_transfer_request": {
+        "tools": {"query_approval_status", "get_employee_profile"},
+        "keywords": ["调动", "转岗", "transfer", "部门", "审批"],
     },
     "create_service_ticket": {
         "tools": {"query_approval_status"},
         "keywords": ["工单", "审批", "ticket", "报销", "IT支持"],
+    },
+    "create_hr_ticket": {
+        "tools": {"query_approval_status"},
+        "keywords": ["工单", "审批", "ticket", "HR工单"],
     },
     "cancel_service_ticket": {
         "tools": {"query_approval_status"},

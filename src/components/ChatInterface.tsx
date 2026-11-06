@@ -338,7 +338,7 @@ export default function ChatInterface({
         setCurrentToolResults([]);
         setCurrentHitlRequest(null);
         const hasApprovalOrLeaveTool = toolCallsRef.current.some(tc => 
-          ['review_approval_request', 'submit_leave_request', 'process_approval'].includes(tc.name)
+          ['review_approval_request', 'submit_leave_request', 'submit_travel_request', 'submit_transfer_request', 'process_approval'].includes(tc.name)
         );
         if (hasApprovalOrLeaveTool) {
           onActionCompleted?.();
@@ -402,7 +402,7 @@ export default function ChatInterface({
       const res = await response.json();
       if (res.success) {
         const data = res.data || {};
-        const refId = data.request_id || data.ticket_id || data.doc_id || 'APR-2026';
+        const refId = data.approval_id || data.request_id || data.ticket_id || data.doc_id || 'APR-2026';
         const msg = data.message || `业务执行成功 (单号: ${refId})`;
 
         setMessages((prev) =>

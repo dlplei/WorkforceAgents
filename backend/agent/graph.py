@@ -66,18 +66,19 @@ def build_system_prompt() -> str:
 
 ## 你的能力
 1. 政策咨询：查询和解释公司各项 HR 政策
-2. 休假管理：查询假期余额、协助请假申请
-3. 差旅管理：计算差旅预算、协助差旅申请
-4. 证明开具：协助开具各类证明
-5. 信息查询：查询员工信息、审批状态等
-6. 工单服务：创建 HR 服务工单、协助异常复核申诉与人工转接支持
-7. 审批管理：协助主管或 HRBP 查询待办单据（query_pending_approvals）、办理审批决策（review_approval_request）
+2. 休假管理：查询假期余额、协助请假申请（submit_leave_request）
+3. 差旅管理：计算差旅预算（calculate_travel_budget）、提交出差申请（submit_travel_request）
+4. 内部调动：查询调动政策、协助提交跨部门/跨地域调动申请（submit_transfer_request）
+5. 证明开具：协助开具各类人事证明（generate_document）
+6. 信息查询：查询员工信息、审批状态等（query_approval_status）
+7. 工单服务：创建 HR 服务工单、协助异常复核申诉与人工转接支持（create_hr_ticket）
+8. 审批管理：协助主管或 HRBP 查询待办单据（query_pending_approvals）、办理审批决策（review_approval_request）
 
 ## 工作原则
 1. **Policy Grounding**：回答政策问题时，必须基于检索到的政策原文，不可编造。**政策依据（Policy Reference）严格仅限于检索到的政策文档原文。若结合国家政务常识或通用经验进行补充，必须明确区分为【国家/公开渠道参考指引】，严禁将外部常识冒充为公司政策条款。**
 2. **引用来源**：回答时标注政策依据（如"根据《员工年假管理办法》第X条"），政策中未记载的内容不可断言为政策条款。
 3. **原生人机协同（HITL）交互原则**：
-   - 涉及提交休假申请（submit_leave_request）、生成正式人事证明（generate_document）、创建 HR 服务工单（create_hr_ticket）等高风险写操作时，只要员工表达了办理诉求（如"帮我提交下周一请假"、"需要开具在职证明"），**必须直接发起对应的工具调用**！系统底层的安全门禁会自动拦截直接落库，并在员工界面直接呼出原生的结构化审批交互卡片。
+   - 涉及提交休假申请（submit_leave_request）、出差差旅申请（submit_travel_request）、员工内部调动转岗（submit_transfer_request）、生成正式人事证明（generate_document）、创建 HR 服务工单（create_hr_ticket）等高风险写操作时，只要员工表达了办理诉求（如"帮我提交下周一请假"、"下周一去上海出差三天帮我提申请"、"我想申请调动到上海研发部"、"需要开具在职证明"），**必须直接发起对应的工具调用**！系统底层的安全门禁会自动拦截直接落库，并在员工界面直接呼出原生的结构化审批交互卡片。
    - **绝对严禁**在纯文本中要求员工打字回复"确认提交"！你的文本回复只需简明指引："已为您整理好申请草稿，请在下方卡片中核对详细信息并点击确认提交"。
    - **人事证明参数默认约定**：开具证明（generate_document）默认语言为【中文】（若用于签证但员工未要求英文，同样默认为中文，并可在答复中提示支持按需换成英文版）；仅当员工明确要求英文时才设为【英文】。
    - **卡片参数变更响应**：当员工对已生成的卡片提出修改（例如输入"我想对刚才的【HR 正式人事证明开具确认】做如下调整：语言为中文版"），**必须立即使用更新后的参数重新调用工具**，以便安全门禁生成更新后的确认卡片！
@@ -245,6 +246,24 @@ async def tool_execution_node(state: AgentState) -> Dict[str, Any]:
                                 "status": "blocked_by_duplicate",
                                 "instruction": f"【业务防重拦截】：该休假申请无法提交。{dup_check['message']}。请直接明确告知员工冲突原因与单据详情，提示无需且禁止重复提交相同日期的请假。",
                                 "details": dup_check["message"],
+                            }, ensure_ascii=False),
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                        )
+                    )
+                    continue
+
+            # 业务前置校验 3：差旅申请起止日期合法性防呆
+            if tool_name == "submit_travel_request":
+                s_date = str(tool_args.get("start_date") or "").strip()
+                e_date = str(tool_args.get("end_date") or "").strip()
+                if s_date and e_date and s_date > e_date:
+                    tool_messages.append(
+                        ToolMessage(
+                            content=json.dumps({
+                                "status": "blocked_by_invalid_date",
+                                "instruction": f"【日期校验不合规】：差旅返程日期 ({e_date}) 不能早于出发日期 ({s_date})，请向员工明确指出并请其提供正确的行程起止日期。",
+                                "details": "返程日期早于出发日期",
                             }, ensure_ascii=False),
                             tool_call_id=tool_call_id,
                             name=tool_name,

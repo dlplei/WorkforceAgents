@@ -516,9 +516,12 @@ def normalize_approval_type_patterns(approval_type: Optional[str]) -> List[str]:
     # 产假 / 育儿假
     if at in ("maternity", "产假", "育儿假"):
         return ["maternity", "产假", "育儿假"]
-    # 差旅报销
-    if at in ("expense", "报销", "差旅报销", "差旅", "travel"):
-        return ["expense", "报销", "差旅"]
+    # 差旅报销与差旅申请
+    if at in ("expense", "报销", "差旅报销", "差旅", "travel", "出差"):
+        return ["expense", "报销", "差旅", "出差", "travel"]
+    # 转岗调动
+    if at in ("transfer", "调动", "转岗", "调岗", "岗位变动"):
+        return ["transfer", "调动", "转岗", "调岗"]
     # 人事证明
     if at in ("certificate", "证明", "在职证明", "收入证明"):
         return ["certificate", "证明"]
@@ -702,10 +705,10 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
                         SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver
                         FROM approvals
                         WHERE status IN ('pending', '待审批')
-                          AND (approver = %s OR approver = %s)
+                          AND (approver = %s OR approver = %s OR approver LIKE %s)
                         ORDER BY request_date DESC;
                         """,
-                        (manager_name, manager_name_or_id)
+                        (manager_name, manager_name_or_id, f"%{manager_name}%")
                     )
                 rows = cur.fetchall()
                 if rows is not None:
@@ -720,7 +723,7 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
     if manager_name != "王芳" and manager_name_or_id != "E10456":
         results = [
             a for a in results
-            if a.get("approver") in (manager_name, manager_name_or_id)
+            if (manager_name in (a.get("approver") or "")) or (manager_name_or_id in (a.get("approver") or ""))
         ]
     return sanitize_db_output(results)
 

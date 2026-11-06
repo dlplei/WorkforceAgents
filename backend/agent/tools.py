@@ -449,10 +449,27 @@ registry.register(
 )
 
 
+def infer_city_tier(city: str) -> str:
+    """根据城市名自动判定城市等级（一线/二线/三线及以下）"""
+    city_str = str(city or "").strip()
+    tier1 = ["北京", "上海", "广州", "深圳"]
+    tier2 = [
+        "杭州", "成都", "武汉", "南京", "西安", "重庆", "苏州",
+        "天津", "长沙", "郑州", "东莞", "青岛", "合肥", "佛山", "宁波"
+    ]
+    for c in tier1:
+        if c in city_str:
+            return "一线"
+    for c in tier2:
+        if c in city_str:
+            return "二线"
+    return "三线及以下"
+
+
 # 7. 计算差旅预算
 async def handle_calculate_travel_budget(params: dict) -> dict:
     days = int(params["days"])
-    tier = params["city_tier"]
+    tier = params.get("city_tier") or infer_city_tier(params.get("destination", ""))
     emp = get_current_employee()
     level = emp["level"]
 
@@ -753,6 +770,194 @@ registry.register(
 )
 
 
+# 11. 提交差旅申请 (Travel Lifecycle Request)
+async def handle_submit_travel_request(params: dict) -> dict:
+    import datetime as _dt
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
+    emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+    emp_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name", "张明")
+    emp_level = emp["level"] if isinstance(emp, dict) else getattr(emp, "level", "P6")
+    emp_manager = getattr(emp, "manager", None) or (emp.get("manager") if isinstance(emp, dict) else "李伟")
+
+    dest = params.get("destination", "上海")
+    start_date = params.get("start_date", "")
+    end_date = params.get("end_date", "")
+    purpose = params.get("purpose", "因公出差与客户交流")
+    transportation = params.get("transportation")
+    if not transportation:
+        if emp_level in ("P6", "P7"):
+            transportation = "高铁一等座 / 航班经济舱"
+        elif emp_level in ("P8", "M1", "M2"):
+            transportation = "高铁商务座 / 航班商务舱"
+        else:
+            transportation = "高铁二等座 / 航班经济舱"
+
+    days = 1
+    if start_date and end_date:
+        try:
+            d1 = _dt.date.fromisoformat(start_date)
+            d2 = _dt.date.fromisoformat(end_date)
+            diff = (d2 - d1).days + 1
+            if diff > 0:
+                days = diff
+        except Exception:
+            pass
+
+    tier = params.get("city_tier") or infer_city_tier(dest)
+    accommodation = {
+        "一线": {"P5": 400, "P6": 600, "P7": 600, "P8": 1000},
+        "二线": {"P5": 300, "P6": 500, "P7": 500, "P8": 800},
+        "三线及以下": {"P5": 250, "P6": 400, "P7": 400, "P8": 600},
+    }
+    meal = {"一线": 100, "二线": 80, "三线及以下": 60}
+    acc_rate = accommodation.get(tier, {}).get(emp_level, 600)
+    meal_rate = meal.get(tier, 100)
+    nights = max(0, days - 1)
+    std_budget = float(nights * acc_rate + days * meal_rate)
+    estimated_budget = float(params.get("estimated_budget") or std_budget)
+
+    try:
+        created = adapter.submit_travel_request(
+            employee_id=emp_id,
+            applicant=emp_name,
+            destination=dest,
+            start_date=start_date,
+            end_date=end_date,
+            purpose=purpose,
+            estimated_budget=estimated_budget,
+            transportation=transportation,
+            approver=emp_manager
+        )
+        return {
+            "success": True,
+            "data": {
+                "approval_id": created["id"],
+                "employee": emp_name,
+                "destination": dest,
+                "city_tier": tier,
+                "duration": f"{start_date} 至 {end_date} (共{days}天)",
+                "estimated_budget": estimated_budget,
+                "transportation": transportation,
+                "purpose": purpose,
+                "approver": emp_manager,
+                "status": "pending",
+                "message": f"差旅申请已成功提交（单号：{created['id']}），已流转至直属主管【{emp_manager}】审批",
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": f"提交差旅申请失败: {str(e)}"}
+
+
+registry.register(
+    name="submit_travel_request",
+    description="提交正式出差/差旅申请。涉及差旅审批流程与预算预扣，这是一个需要确认的高风险写操作，会创建审批流程。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "destination": {"type": "string", "description": "出差目的地城市（如：上海、深圳、成都、杭州等）"},
+            "start_date": {"type": "string", "description": "出差开始日期，格式 YYYY-MM-DD"},
+            "end_date": {"type": "string", "description": "出差结束日期，格式 YYYY-MM-DD"},
+            "purpose": {"type": "string", "description": "出差主要事由与业务目标说明"},
+            "estimated_budget": {"type": "number", "description": "预估总差旅预算金额（元），未提供时系统按职级与城市差标自动测算"},
+            "transportation": {"type": "string", "description": "建议或拟乘交通方式（如：高铁一等座、航班经济舱）"},
+        },
+        "required": ["destination", "start_date", "end_date", "purpose"],
+    },
+    category="action",
+    permission_level="confirmation",
+    handler=handle_submit_travel_request,
+)
+
+
+# 12. 提交员工调动/转岗申请 (Internal Mobility / Transfer Request)
+async def handle_submit_transfer_request(params: dict) -> dict:
+    import datetime as _dt
+    adapter = get_hr_adapter()
+    emp = get_current_employee()
+    emp_id = emp["id"] if isinstance(emp, dict) else getattr(emp, "id", "E10293")
+    emp_name = emp["name"] if isinstance(emp, dict) else getattr(emp, "name", "张明")
+    cur_dept = emp["department"] if isinstance(emp, dict) else getattr(emp, "department", "技术研发部")
+    cur_loc = emp["location"] if isinstance(emp, dict) else getattr(emp, "location", "北京")
+    cur_pos = emp["position"] if isinstance(emp, dict) else getattr(emp, "position", "高级前端工程师")
+    emp_manager = getattr(emp, "manager", None) or (emp.get("manager") if isinstance(emp, dict) else "李伟")
+
+    target_dept = params.get("target_department", cur_dept)
+    target_loc = params.get("target_location", cur_loc)
+    target_pos = params.get("target_position", cur_pos)
+    effective_date = params.get("effective_date", "")
+    reason = params.get("reason", "个人发展与岗位调动")
+
+    # 司龄合规前置检查（《POL-004 员工调动管理办法》：入职满1年）
+    hire_date_str = emp.get("hire_date") if isinstance(emp, dict) else getattr(emp, "hire_date", "2022-03-15")
+    try:
+        hire_d = _dt.date.fromisoformat(hire_date_str)
+        today = _dt.date.today()
+        tenure_months = (today.year - hire_d.year) * 12 + (today.month - hire_d.month)
+        if tenure_months < 12:
+            return {
+                "success": False,
+                "error": f"不满足调动政策资格要求：根据《POL-004 员工调动管理办法》，在岗工作需满1年，当前在岗约 {tenure_months} 个月。"
+            }
+    except Exception:
+        pass
+
+    is_cross_city = (target_loc != cur_loc)
+    approver = f"{emp_manager} (转出主管) / 王芳 (HRBP)"
+    if is_cross_city:
+        approver += " / 薪酬委员会"
+
+    try:
+        created = adapter.submit_transfer_request(
+            employee_id=emp_id,
+            applicant=emp_name,
+            target_department=target_dept,
+            target_location=target_loc,
+            target_position=target_pos,
+            effective_date=effective_date,
+            reason=reason,
+            approver=approver
+        )
+        return {
+            "success": True,
+            "data": {
+                "approval_id": created["id"],
+                "employee": emp_name,
+                "from_department": f"{cur_dept} ({cur_loc})",
+                "to_department": f"{target_dept} ({target_loc})",
+                "target_position": target_pos,
+                "effective_date": effective_date,
+                "is_cross_city": is_cross_city,
+                "benefits_notice": "根据《POL-004》享有最高2万元异地搬迁补贴与首月房补，社保公积金次月转移" if is_cross_city else "同城岗位调动，社保公积金及薪资保持平移",
+                "approver": approver,
+                "status": "pending",
+                "message": f"调动/转岗申请已成功提交（单号：{created['id']}），已启动双向主管与 HRBP 审批协同流转",
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": f"提交调动申请失败: {str(e)}"}
+
+
+registry.register(
+    name="submit_transfer_request",
+    description="提交内部转岗/调动申请（如从北京调往上海分公司、同城跨部门等）。涉及跨部门组织架构、人事合同与异地补贴审批，这是一个高风险确认操作，会创建审批流程。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "target_department": {"type": "string", "description": "拟调往的目标部门（如：技术研发部、业务产品部、华东销售部等）"},
+            "target_location": {"type": "string", "description": "拟调往的目标工作城市（如：上海、北京、深圳等）"},
+            "target_position": {"type": "string", "description": "拟任职位名称（如未变动可保持原职级岗位）"},
+            "effective_date": {"type": "string", "description": "期望调动生效日期，格式 YYYY-MM-DD"},
+            "reason": {"type": "string", "description": "申请调动原因与业务诉求说明"},
+        },
+        "required": ["target_department", "target_location", "effective_date", "reason"],
+    },
+    category="action",
+    permission_level="confirmation",
+    handler=handle_submit_transfer_request,
+)
+
+
 
 # ============ HITL 辅助构建器 ============
 
@@ -871,6 +1076,86 @@ def build_hitl_action_request(
             raw_arguments=arguments,
             status="pending",
             risk_level="medium",
+            created_at=ts,
+        )
+
+    elif tool_name == "submit_travel_request":
+        import datetime as _dt
+        dest = arguments.get("destination", "未指定")
+        start_date = arguments.get("start_date", "未指定")
+        end_date = arguments.get("end_date", "未指定")
+        purpose = arguments.get("purpose", "因公出差")
+        transportation = arguments.get("transportation", "高铁一等座 / 航班经济舱")
+
+        days = 1
+        if start_date != "未指定" and end_date != "未指定":
+            try:
+                d1 = _dt.date.fromisoformat(start_date)
+                d2 = _dt.date.fromisoformat(end_date)
+                days = max(1, (d2 - d1).days + 1)
+            except Exception:
+                pass
+
+        tier = infer_city_tier(dest)
+        acc_standards = {"一线": 600, "二线": 500, "三线及以下": 400}
+        meal_standards = {"一线": 100, "二线": 80, "三线及以下": 60}
+        nights = max(0, days - 1)
+        std_budget = nights * acc_standards.get(tier, 500) + days * meal_standards.get(tier, 80)
+        user_budget = arguments.get("estimated_budget")
+        budget_str = f"¥{user_budget}" if user_budget else f"¥{std_budget} (按《POL-003》{tier}城市差标预估)"
+
+        return HitlActionRequest(
+            action_id=action_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            title="员工出差差旅申请核实与确认 (HITL)",
+            category="travel",
+            summary={
+                "出差员工": f"{emp_name} ({emp_id})",
+                "出差目的地": f"{dest} ({tier}城市)",
+                "出行周期": f"{start_date} 至 {end_date} (共 {days} 天)",
+                "出差主要事由": purpose,
+                "拟乘交通": transportation,
+                "预估差旅差标": budget_str,
+                "审批流转": f"直属主管【{emp_mgr}】审批",
+                "生效机制": "确认后自动写入 HR 差旅系统审批台账",
+            },
+            raw_arguments=arguments,
+            status="pending",
+            risk_level="medium",
+            created_at=ts,
+        )
+
+    elif tool_name == "submit_transfer_request":
+        target_dept = arguments.get("target_department", emp_dept)
+        target_loc = arguments.get("target_location", "未指定")
+        target_pos = arguments.get("target_position", "保持原岗位")
+        effective_date = arguments.get("effective_date", "未指定")
+        reason = arguments.get("reason", "个人发展")
+
+        cur_loc = getattr(emp, "location", None) or (emp.get("location") if isinstance(emp, dict) else "北京")
+        is_cross = (target_loc != cur_loc and target_loc != "未指定")
+        policy_notice = "跨城异地调动：享有最高2万元搬迁补贴与首月房补；社保公积金次月转移至新城市" if is_cross else "同城部门调动：社保公积金与基本薪资标准平移"
+
+        return HitlActionRequest(
+            action_id=action_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            title="员工内部调动/转岗申请核验 (HITL)",
+            category="transfer",
+            summary={
+                "申请员工": f"{emp_name} ({emp_id})",
+                "当前岗位": f"{emp_dept} · {getattr(emp, 'position', '高级前端工程师')} ({cur_loc})",
+                "拟调往部门": f"{target_dept} · {target_loc} (拟任: {target_pos})",
+                "期望生效日期": effective_date,
+                "调动事由": reason,
+                "政策合规预检": "司龄已满1年，符合《POL-004 员工调动管理办法》申请资格",
+                "福利与人事须知": policy_notice,
+                "审批协同流转": f"转出主管【{emp_mgr}】 + 目标部门总监 + HRBP 王芳会签",
+            },
+            raw_arguments=arguments,
+            status="pending",
+            risk_level="high",
             created_at=ts,
         )
 

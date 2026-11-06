@@ -45,6 +45,37 @@ class IHRServiceAdapter(ABC):
         pass
 
     @abstractmethod
+    def submit_travel_request(
+        self,
+        employee_id: str,
+        applicant: str,
+        destination: str,
+        start_date: str,
+        end_date: str,
+        purpose: str,
+        estimated_budget: float,
+        transportation: str = "高铁/航班经济舱",
+        approver: str = "李伟"
+    ) -> Dict[str, Any]:
+        """提交出差审批申请"""
+        pass
+
+    @abstractmethod
+    def submit_transfer_request(
+        self,
+        employee_id: str,
+        applicant: str,
+        target_department: str,
+        target_location: str,
+        target_position: str,
+        effective_date: str,
+        reason: str,
+        approver: str = "李伟 (转出主管) / 王芳 (HRBP)"
+    ) -> Dict[str, Any]:
+        """提交员工内部调动/转岗申请"""
+        pass
+
+    @abstractmethod
     def get_approvals(self, employee_id: str, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """查询审批流状态"""
         pass
@@ -124,6 +155,62 @@ class LocalPostgresAdapter(IHRServiceAdapter):
             reason=reason,
             approver=approver
         )
+
+    def submit_travel_request(
+        self,
+        employee_id: str,
+        applicant: str,
+        destination: str,
+        start_date: str,
+        end_date: str,
+        purpose: str,
+        estimated_budget: float,
+        transportation: str = "高铁/航班经济舱",
+        approver: str = "李伟"
+    ) -> Dict[str, Any]:
+        req_id = f"TRV-{random.randint(100, 999)}"
+        today_str = datetime.date.today().isoformat()
+        detail_reason = f"目的地: {destination} | 出差事由: {purpose} | 预算: ¥{estimated_budget} | 建议交通: {transportation}"
+        approval = database.create_approval(
+            approval_id=req_id,
+            employee_id=employee_id,
+            applicant=applicant,
+            approval_type="差旅申请",
+            status="pending",
+            request_date=today_str,
+            start_date=start_date,
+            end_date=end_date,
+            reason=detail_reason,
+            approver=approver
+        )
+        return approval
+
+    def submit_transfer_request(
+        self,
+        employee_id: str,
+        applicant: str,
+        target_department: str,
+        target_location: str,
+        target_position: str,
+        effective_date: str,
+        reason: str,
+        approver: str = "李伟 (转出主管) / 王芳 (HRBP)"
+    ) -> Dict[str, Any]:
+        req_id = f"TRF-{random.randint(100, 999)}"
+        today_str = datetime.date.today().isoformat()
+        detail_reason = f"拟调往: {target_department} ({target_location}) | 拟任岗位: {target_position} | 生效日期: {effective_date} | 调动原由: {reason}"
+        approval = database.create_approval(
+            approval_id=req_id,
+            employee_id=employee_id,
+            applicant=applicant,
+            approval_type="转岗调动",
+            status="pending",
+            request_date=today_str,
+            start_date=effective_date,
+            reason=detail_reason,
+            approver=approver
+        )
+        return approval
 
     def get_approvals(
         self,
@@ -227,6 +314,52 @@ class ServiceNowAdapter(IHRServiceAdapter):
             employee_id, applicant, leave_type, start_date, end_date, reason, approver
         )
         return local_approval
+
+    def submit_travel_request(
+        self,
+        employee_id: str,
+        applicant: str,
+        destination: str,
+        start_date: str,
+        end_date: str,
+        purpose: str,
+        estimated_budget: float,
+        transportation: str = "高铁/航班经济舱",
+        approver: str = "李伟"
+    ) -> Dict[str, Any]:
+        return self.local_backup.submit_travel_request(
+            employee_id=employee_id,
+            applicant=applicant,
+            destination=destination,
+            start_date=start_date,
+            end_date=end_date,
+            purpose=purpose,
+            estimated_budget=estimated_budget,
+            transportation=transportation,
+            approver=approver,
+        )
+
+    def submit_transfer_request(
+        self,
+        employee_id: str,
+        applicant: str,
+        target_department: str,
+        target_location: str,
+        target_position: str,
+        effective_date: str,
+        reason: str,
+        approver: str = "李伟 (转出主管) / 王芳 (HRBP)"
+    ) -> Dict[str, Any]:
+        return self.local_backup.submit_transfer_request(
+            employee_id=employee_id,
+            applicant=applicant,
+            target_department=target_department,
+            target_location=target_location,
+            target_position=target_position,
+            effective_date=effective_date,
+            reason=reason,
+            approver=approver,
+        )
 
     def get_approvals(self, employee_id: str, request_id: Optional[str] = None) -> List[Dict[str, Any]]:
         return self.local_backup.get_approvals(employee_id, request_id)

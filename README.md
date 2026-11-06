@@ -507,8 +507,10 @@ podman compose up -d prometheus grafana
 
 ### 2. 写操作主动失效联动 (Evict-on-Write)
 当用户通过 Agent 执行写操作工具时，系统主动定位并淘汰关联的动态查询缓存，杜绝底层数据库更新后读取旧缓存的现象：
-- 执行 `submit_leave_request`（提交请假）成功 ➔ 联动淘汰个人年假余额（`query_leave_balance`）与请假相关提问缓存；
-- 执行 `create_service_ticket` / `cancel_service_ticket` 成功 ➔ 联动淘汰审批状态（`query_approval_status`）相关缓存。
+- 执行 `submit_leave_request`（提交请假）成功 ➔ 联动淘汰个人年假余额（`query_leave_balance`）、日程与请假相关提问缓存；
+- 执行 `submit_travel_request`（提交出差）成功 ➔ 联动淘汰审批状态（`query_approval_status`）、个人出差日程与差旅预算相关缓存；
+- 执行 `submit_transfer_request`（提交调动）成功 ➔ 联动淘汰审批状态（`query_approval_status`）与员工档案相关缓存；
+- 执行 `create_service_ticket` / `create_hr_ticket` / `cancel_service_ticket` 成功 ➔ 联动淘汰审批状态（`query_approval_status`）与工单相关缓存。
 
 ### 3. 物理回收兜底机制 (Redis LRU Eviction)
 - 结合 Redis **惰性删除 (Lazy Free)** 与 **定期随机采样淘汰**；
@@ -750,6 +752,10 @@ podman compose up -d prometheus grafana
   - *预期表现*：调用 `generate_employment_certificate`。
 - **请假申请**: `"帮我请10月8日到10日的年假"`
   - *预期表现*：调用 `submit_leave_request`，触发写操作并联动主动淘汰个人假期缓存 (Evict-on-Write)。
+- **出差申请**: `"我下周一到周三去上海出差，参加大客户技术研讨，帮我提一下申请"`
+  - *预期表现*：调用 `submit_travel_request`，根据上海城市差标智能核算预算，HITL 门禁挂起呼出出差确认卡片，人工确认后落库并流转直属主管李伟。
+- **内部调动申请**: `"我想申请从北京调到上海分部技术研发部，岗位保持高级前端工程师，12月1日生效"`
+  - *预期表现*：调用 `submit_transfer_request`，执行《POL-004》司龄满1年资格预检与异地搬迁补贴政策指引，HITL 门禁挂起高风险调动确认卡片，确认后流转双向主管与 HRBP 会签。
 
 ### 4. 主管审批闭环与多身份切换测试 (Manager Approval Hub)
 - **多身份动态切换与待办感知**: 在右上角 Persona 菜单切换至 `李伟 (技术总监 / 研发主管)`

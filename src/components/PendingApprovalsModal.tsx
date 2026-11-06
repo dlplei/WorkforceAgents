@@ -13,6 +13,95 @@ interface PendingApprovalsModalProps {
   onApprovalDone?: () => void;
 }
 
+interface BadgeConfig {
+  badgeText: string;
+  badgeClass: string;
+  typeLabel: string;
+  category: 'leave' | 'travel' | 'transfer' | 'expense' | 'document' | 'other';
+}
+
+function getApprovalBadgeConfig(rawType: string = ''): BadgeConfig {
+  const t = rawType.toLowerCase();
+
+  // 1. 转岗调动
+  if (t.includes('调动') || t.includes('转岗') || t === 'transfer') {
+    return {
+      badgeText: '转岗审批',
+      badgeClass: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
+      typeLabel: '转岗调动',
+      category: 'transfer',
+    };
+  }
+
+  // 2. 差旅申请
+  if (t.includes('差旅') || t.includes('出差') || t === 'travel') {
+    return {
+      badgeText: '差旅审批',
+      badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+      typeLabel: '差旅申请',
+      category: 'travel',
+    };
+  }
+
+  // 3. 费用报销
+  if (t.includes('报销') || t === 'expense') {
+    return {
+      badgeText: '报销审批',
+      badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+      typeLabel: '费用报销',
+      category: 'expense',
+    };
+  }
+
+  // 4. 年假
+  if (t.includes('年假') || t === 'annual') {
+    return {
+      badgeText: '年假审批',
+      badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+      typeLabel: '年假申请',
+      category: 'leave',
+    };
+  }
+
+  // 5. 病假
+  if (t.includes('病假') || t === 'sick') {
+    return {
+      badgeText: '病假审批',
+      badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
+      typeLabel: '病假申请',
+      category: 'leave',
+    };
+  }
+
+  // 6. 证明
+  if (t.includes('证明') || t === 'document') {
+    return {
+      badgeText: '证明审批',
+      badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/40',
+      typeLabel: '人事证明',
+      category: 'document',
+    };
+  }
+
+  // 7. 事假
+  if (t.includes('事假') || t === 'personal') {
+    return {
+      badgeText: '事假审批',
+      badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/40',
+      typeLabel: '事假申请',
+      category: 'leave',
+    };
+  }
+
+  return {
+    badgeText: '请假审批',
+    badgeClass: 'bg-teal-500/20 text-teal-300 border-teal-500/40',
+    typeLabel: rawType || '日常事务',
+    category: 'other',
+  };
+}
+
+
 export default function PendingApprovalsModal({
   isOpen,
   onClose,
@@ -306,18 +395,7 @@ export default function PendingApprovalsModal({
                 }
                 calcDays = calcDays || 1;
 
-                let typeBadge = '请假审批';
-                if (rawType.includes('报销')) typeBadge = '报销审批';
-                else if (rawType.includes('证明')) typeBadge = '证明审批';
-                else if (rawType.includes('年假')) typeBadge = '年假审批';
-                else if (rawType.includes('病假')) typeBadge = '病假审批';
-
-                let leaveTypeLabel = '年假';
-                if (rawType === 'sick' || rawType.includes('病假')) leaveTypeLabel = '病假';
-                else if (rawType === 'personal' || rawType.includes('事假')) leaveTypeLabel = '事假';
-                else if (rawType.includes('报销')) leaveTypeLabel = '差旅报销';
-                else if (rawType === 'annual' || rawType.includes('年假')) leaveTypeLabel = '年假';
-                else leaveTypeLabel = rawType;
+                const badgeInfo = getApprovalBadgeConfig(rawType);
 
                 const displaySubmitted = rawDate
                   ? rawDate.includes('T')
@@ -329,8 +407,8 @@ export default function PendingApprovalsModal({
                   <div key={approvalId} className="bg-slate-900/70 border border-slate-700/80 rounded-xl p-4 space-y-3">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center space-x-2">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                          {typeBadge}
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${badgeInfo.badgeClass}`}>
+                          {badgeInfo.badgeText}
                         </span>
                         <button
                           type="button"
@@ -361,14 +439,20 @@ export default function PendingApprovalsModal({
                     <div className="flex items-center space-x-1.5 text-slate-300">
                       <Calendar className="w-3.5 h-3.5 text-cyan-400" />
                       <span>类型: </span>
-                      <span className="font-semibold text-white">{leaveTypeLabel}</span>
-                      <span className="text-amber-300 font-bold ml-1">{calcDays} 天</span>
+                      <span className="font-semibold text-white">{badgeInfo.typeLabel}</span>
+                      {badgeInfo.category === 'leave' || badgeInfo.category === 'travel' ? (
+                        <span className="text-amber-300 font-bold ml-1">{calcDays} 天</span>
+                      ) : (item.amount || item.details?.amount) ? (
+                        <span className="text-amber-300 font-bold ml-1">¥{Number(item.amount || item.details?.amount).toFixed(2)}</span>
+                      ) : null}
                     </div>
                     <div className="col-span-2 flex items-center space-x-1.5 text-slate-300">
                       <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>时间: </span>
+                      <span>{badgeInfo.category === 'transfer' ? '生效日期: ' : '时间周期: '}</span>
                       <span className="font-mono text-slate-200">
-                        {startDate || '待定'} ~ {endDate || '待定'}
+                        {badgeInfo.category === 'transfer'
+                          ? (startDate || item.details?.effective_date || '即日生效')
+                          : `${startDate || '待定'} ~ ${endDate || '待定'}`}
                       </span>
                     </div>
                     {reason && (
@@ -479,7 +563,9 @@ export default function PendingApprovalsModal({
                             <Copy className="w-3 h-3 text-slate-400" />
                           )}
                         </button>
-                        <span className="text-xs text-slate-300 font-medium">{rawType}</span>
+                        <span className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getApprovalBadgeConfig(rawType).badgeClass}`}>
+                          {getApprovalBadgeConfig(rawType).badgeText}
+                        </span>
                       </div>
                       <span className="text-[11px] text-slate-500">
                         申请日期: {item.request_date || item.date || '未知'}

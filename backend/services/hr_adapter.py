@@ -85,7 +85,7 @@ class IHRServiceAdapter(ABC):
         description: str = "",
         invoice_count: int = 1,
         travel_request_id: Optional[str] = None,
-        approver: str = "李伟"
+        approver: str = "李伟 (直属主管) / 陈敏 (财务复核)"
     ) -> Dict[str, Any]:
         """提交费用与差旅报销申请"""
         pass
@@ -245,7 +245,7 @@ class LocalPostgresAdapter(IHRServiceAdapter):
         description: str = "",
         invoice_count: int = 1,
         travel_request_id: Optional[str] = None,
-        approver: str = "李伟"
+        approver: str = "李伟 (直属主管) / 陈敏 (财务复核)"
     ) -> Dict[str, Any]:
         return database.submit_expense_claim(
             employee_id=employee_id,
@@ -426,7 +426,7 @@ class ServiceNowAdapter(IHRServiceAdapter):
         description: str = "",
         invoice_count: int = 1,
         travel_request_id: Optional[str] = None,
-        approver: str = "李伟"
+        approver: str = "李伟 (直属主管) / 陈敏 (财务复核)"
     ) -> Dict[str, Any]:
         return self.local_backup.submit_expense_claim(
             employee_id=employee_id,

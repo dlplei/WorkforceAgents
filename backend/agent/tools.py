@@ -323,7 +323,7 @@ async def handle_submit_leave_request(params: dict) -> dict:
             start_date=start_date,
             end_date=end_date,
             reason=reason,
-            approver=emp_mgr
+            approver=f"{emp_mgr} (直属主管) / 陈敏 (财务复核)"
         )
     except ValueError as e:
         return {
@@ -980,6 +980,7 @@ async def handle_submit_expense_claim(params: dict) -> dict:
 
     inv_cnt = max(1, int(invoice_count or 1))
 
+    exp_approver = f"{emp_mgr} (直属主管) / 陈敏 (财务复核)"
     approval = adapter.submit_expense_claim(
         employee_id=emp_id,
         applicant=emp_name,
@@ -988,7 +989,7 @@ async def handle_submit_expense_claim(params: dict) -> dict:
         description=description,
         invoice_count=inv_cnt,
         travel_request_id=travel_request_id,
-        approver=emp_mgr
+        approver=exp_approver
     )
 
     return {
@@ -1002,9 +1003,10 @@ async def handle_submit_expense_claim(params: dict) -> dict:
             "category": category,
             "invoice_count": inv_cnt,
             "travel_request_id": travel_request_id,
-            "approver": emp_mgr,
+            "approver": approval.get("approver") or exp_approver,
             "current_status": "pending",
-            "message": f"费用报销申请【{approval.get('id')}】已成功提报！金额 ¥{amt:.2f}，已流转至直属主管【{emp_mgr}】审批及财务复核。"
+            "is_duplicate": approval.get("is_duplicate", False),
+            "message": f"费用报销申请【{approval.get('id')}】已成功提报！金额 ¥{amt:.2f}，已流转至直属主管【{emp_mgr}】审批及财务专员【陈敏】复核。",
         }
     }
 
@@ -1284,7 +1286,7 @@ def build_hitl_action_request(
                 "费用事由": description,
                 "关联出差审批": travel_req_id if travel_req_id else "无 (非关联合并出差)",
                 "政策合规提示": "按《POL-003》出差结束后5个工作日内报销，超标部分需事先审批",
-                "流转审批人": f"直属主管【{emp_mgr}】审核与财务核验",
+                "流转审批人": f"直属主管【{emp_mgr}】审批 / 陈敏 (财务复核)",
             },
             raw_arguments=arguments,
             status="pending",

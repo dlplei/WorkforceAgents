@@ -72,7 +72,8 @@ def test_submit_expense_claim_execution_and_approvals():
     approval_id = data["approval_id"]
     assert approval_id.startswith("EXP-")
     assert data["applicant"] == "张明"
-    assert data["approver"] == "李伟"
+    assert "李伟" in data["approver"]
+    assert "陈敏" in data["approver"]
 
     pending_list = database.query_pending_approvals_for_manager("李伟")
     exp_approvals = [a for a in pending_list if a.get("id") == approval_id or a.get("approval_id") == approval_id]

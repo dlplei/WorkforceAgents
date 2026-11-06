@@ -70,6 +70,26 @@ const DEFAULT_PERSONAS: EmployeeProfile[] = [
     manager: '赵静',
     leave_balance: { annual: 12, sick: 8, personal: 3 },
   },
+  {
+    id: 'E10501',
+    name: '陈敏',
+    department: '财务部',
+    position: '财务专员 / 报销审核',
+    level: 'P6',
+    location: '北京',
+    manager: '赵静',
+    leave_balance: { annual: 10, sick: 5, personal: 2 },
+  },
+  {
+    id: 'E10000',
+    name: '赵静',
+    department: '技术研发中心',
+    position: '研发副总裁 / VP',
+    level: 'M2',
+    location: '北京',
+    manager: '张一鸣',
+    leave_balance: { annual: 20, sick: 15, personal: 10 },
+  },
 ];
 
 export default function App() {
@@ -347,6 +367,7 @@ export default function App() {
                   const isSelected = emp.id === currentEmployee.id;
                   const isManager = emp.level.startsWith('M');
                   const isHR = emp.department.includes('人力');
+                  const isFinance = emp.department.includes('财务');
                   return (
                     <button
                       key={emp.id}
@@ -371,6 +392,11 @@ export default function App() {
                               HRBP
                             </span>
                           )}
+                          {isFinance && (
+                            <span className="text-[9px] px-1 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded">
+                              财务
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-slate-400 mt-0.5">
                           {emp.department} · {emp.position}
@@ -387,6 +413,7 @@ export default function App() {
           {/* Pending Approvals Entry Button */}
           {(currentEmployee.level.startsWith('M') ||
             currentEmployee.department.includes('人力') ||
+            currentEmployee.department.includes('财务') ||
             pendingApprovalsCount > 0) && (
             <button
               onClick={() => setShowApprovalsModal(true)}

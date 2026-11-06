@@ -141,6 +141,19 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         leave_balance=LeaveBalance(annual=5, sick=5, personal=1),
         benefits=["五险一金", "补充商业保险", "年度体检"],
     ),
+    "E10501": EmployeeProfile(
+        id="E10501",
+        name="陈敏",
+        department="财务部",
+        position="财务专员 / 报销审核",
+        level="P6",
+        location="北京",
+        manager="赵静",
+        hire_date="2021-04-12",
+        contract_type="全职",
+        leave_balance=LeaveBalance(annual=10, sick=5, personal=2),
+        benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+    ),
 }
 
 
@@ -193,14 +206,68 @@ def init_db() -> bool:
                     conn.rollback()
 
                 try:
+                    import json
+                    for emp_id, emp in MOCK_EMPLOYEES.items():
+                        cur.execute(
+                            """
+                            INSERT INTO employees (id, name, department, position, level, location, manager, hire_date, contract_type, benefits)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                            ON CONFLICT (id) DO UPDATE SET
+                                name = EXCLUDED.name,
+                                department = EXCLUDED.department,
+                                position = EXCLUDED.position,
+                                level = EXCLUDED.level,
+                                location = EXCLUDED.location,
+                                manager = EXCLUDED.manager,
+                                hire_date = EXCLUDED.hire_date,
+                                contract_type = EXCLUDED.contract_type,
+                                benefits = EXCLUDED.benefits;
+                            """,
+                            (
+                                emp.id, emp.name, emp.department, emp.position, emp.level,
+                                emp.location, emp.manager, emp.hire_date, emp.contract_type,
+                                json.dumps(emp.benefits or [], ensure_ascii=False)
+                            )
+                        )
+                        lb = emp.leave_balance
+                        cur.execute(
+                            """
+                            INSERT INTO leave_balances (employee_id, annual, sick, personal)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (employee_id) DO NOTHING;
+                            """,
+                            (emp.id, lb.annual if lb else 0, lb.sick if lb else 0, lb.personal if lb else 0)
+                        )
+
                     cur.execute(
                         """
-                        INSERT INTO employees (id, name, department, position, level, location, manager, hire_date, contract_type, benefits)
-                        VALUES ('E10001', '李伟', '技术研发部', '技术总监 / 研发主管', 'M1', '北京', '赵静', '2019-06-10', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"]'::jsonb)
-                        ON CONFLICT (id) DO NOTHING;
-                        INSERT INTO leave_balances (employee_id, annual, sick, personal)
-                        VALUES ('E10001', 15.0, 10.0, 5.0)
-                        ON CONFLICT (employee_id) DO NOTHING;
+                        DELETE FROM calendar_events a USING calendar_events b
+                        WHERE a.id > b.id
+                          AND a.employee_id = b.employee_id
+                          AND a.event_date = b.event_date
+                          AND a.title = b.title;
+
+                        DO $$
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM pg_constraint WHERE conname = 'uq_calendar_employee_date_title'
+                            ) THEN
+                                ALTER TABLE calendar_events ADD CONSTRAINT uq_calendar_employee_date_title UNIQUE (employee_id, event_date, title);
+                            END IF;
+                        END $$;
+
+                        DELETE FROM approvals a USING approvals b
+                        WHERE a.id > b.id
+                          AND a.employee_id = b.employee_id
+                          AND a.approval_type = b.approval_type
+                          AND COALESCE(a.start_date, '') = COALESCE(b.start_date, '')
+                          AND a.status IN ('pending', '待审批')
+                          AND b.status IN ('pending', '待审批');
+
+                        CREATE UNIQUE INDEX IF NOT EXISTS uq_approvals_pending_active 
+                        ON approvals (employee_id, approval_type, COALESCE(start_date, '')) 
+                        WHERE status IN ('pending', '待审批');
+
                         INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
                         VALUES ('APR-001', 'E10293', '张明', '年假申请', 'pending', '2026-05-15', '2026-06-01', '2026-06-02', '节后调休探亲，已交接前端开发进度', '李伟')
                         ON CONFLICT (id) DO UPDATE SET
@@ -503,10 +570,31 @@ def create_approval(
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                # 在途待办防重拦截：若同员工同类型同起始日期已有待审批单据，复用在途单据
+                if status in ("pending", "待审批"):
+                    cur.execute(
+                        """
+                        SELECT id, approval_type, status, applicant, request_date, start_date, end_date
+                        FROM approvals
+                        WHERE employee_id = %s
+                          AND approval_type = %s
+                          AND COALESCE(start_date, '') = COALESCE(%s, '')
+                          AND status IN ('pending', '待审批')
+                        LIMIT 1;
+                        """,
+                        (employee_id, approval_type, start_date)
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        res_dict = sanitize_db_output(dict(existing))
+                        res_dict["is_duplicate"] = True
+                        return res_dict
+
                 cur.execute(
                     """
                     INSERT INTO approvals (id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
                     RETURNING id, approval_type, status, applicant, request_date, start_date, end_date;
                     """,
                     (approval_id, employee_id, applicant, approval_type, status, request_date, start_date, end_date, reason, approver)
@@ -730,7 +818,7 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
-                if manager_name == "王芳" or manager_name_or_id == "E10456":
+                if manager_name in ("王芳", "陈敏") or manager_name_or_id in ("E10456", "E10501"):
                     cur.execute(
                         """
                         SELECT id, id AS approval_id, employee_id, approval_type AS type, approval_type, status, applicant, applicant AS employee_name, request_date AS date, request_date, start_date, end_date, reason, approver
@@ -1394,7 +1482,7 @@ def submit_expense_claim(
     description: str = "",
     invoice_count: int = 1,
     travel_request_id: Optional[str] = None,
-    approver: str = "李伟"
+    approver: str = "李伟 (直属主管) / 陈敏 (财务复核)"
 ) -> Dict[str, Any]:
     """提交费用报销申请并持久化至审批流"""
     req_id = f"EXP-{random.randint(100, 999)}"

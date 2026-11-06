@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     employee_id VARCHAR(50) REFERENCES employees(id) ON DELETE CASCADE,
     event_date VARCHAR(50) NOT NULL,
     title VARCHAR(200) NOT NULL,
-    event_type VARCHAR(50) NOT NULL
+    event_type VARCHAR(50) NOT NULL,
+    CONSTRAINT uq_calendar_employee_date_title UNIQUE (employee_id, event_date, title)
 );
 
 -- 审批单表
@@ -44,6 +45,11 @@ CREATE TABLE IF NOT EXISTS approvals (
     comment TEXT,
     action_date VARCHAR(50)
 );
+
+-- 审批单在途防重索引
+CREATE UNIQUE INDEX IF NOT EXISTS uq_approvals_pending_active 
+ON approvals (employee_id, approval_type, COALESCE(start_date, '')) 
+WHERE status IN ('pending', '待审批');
 
 -- HR 服务工单表 (Service Request / Tickets)
 CREATE TABLE IF NOT EXISTS hr_tickets (
@@ -63,18 +69,38 @@ CREATE TABLE IF NOT EXISTS hr_tickets (
 -- 插入初始员工数据
 INSERT INTO employees (id, name, department, position, level, location, manager, hire_date, contract_type, benefits)
 VALUES
-('E10293', '张明', '技术研发部', '高级前端工程师', 'P6', '北京', '李伟', '2022-03-15', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作"]'::jsonb),
+('E10000', '赵静', '技术研发中心', '研发副总裁 / VP', 'M2', '北京', '张一鸣', '2018-01-15', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权", "企业年金"]'::jsonb),
 ('E10001', '李伟', '技术研发部', '技术总监 / 研发主管', 'M1', '北京', '赵静', '2019-06-10', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"]'::jsonb),
-('E10456', '王芳', '人力资源部', 'HRBP', 'P7', '上海', '赵静', '2020-08-01', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"]'::jsonb)
-ON CONFLICT (id) DO NOTHING;
+('E10293', '张明', '技术研发部', '高级前端工程师', 'P6', '北京', '李伟', '2022-03-15', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作"]'::jsonb),
+('E10301', '钱浩', '技术研发部', '资深后端工程师', 'P6', '北京', '李伟', '2021-11-01', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作"]'::jsonb),
+('E10456', '王芳', '人力资源部', 'HRBP', 'P7', '上海', '赵静', '2020-08-01', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"]'::jsonb),
+('E10401', '刘洋', '人力资源部', '招聘与员工关系专员', 'P5', '上海', '王芳', '2023-04-10', '全职', '["五险一金", "补充商业保险", "年度体检"]'::jsonb),
+('E10501', '陈敏', '财务部', '财务专员 / 报销审核', 'P6', '北京', '赵静', '2021-04-12', '全职', '["五险一金", "补充商业保险", "年度体检", "弹性工作"]'::jsonb)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  department = EXCLUDED.department,
+  position = EXCLUDED.position,
+  level = EXCLUDED.level,
+  location = EXCLUDED.location,
+  manager = EXCLUDED.manager,
+  hire_date = EXCLUDED.hire_date,
+  contract_type = EXCLUDED.contract_type,
+  benefits = EXCLUDED.benefits;
 
 -- 插入假期余额
 INSERT INTO leave_balances (employee_id, annual, sick, personal)
 VALUES
-('E10293', 7.0, 5.0, 2.0),
+('E10000', 20.0, 15.0, 10.0),
 ('E10001', 15.0, 10.0, 5.0),
-('E10456', 12.0, 8.0, 3.0)
-ON CONFLICT (employee_id) DO NOTHING;
+('E10293', 7.0, 5.0, 2.0),
+('E10301', 8.0, 5.0, 3.0),
+('E10456', 12.0, 8.0, 3.0),
+('E10401', 5.0, 5.0, 1.0),
+('E10501', 10.0, 5.0, 2.0)
+ON CONFLICT (employee_id) DO UPDATE SET
+  annual = EXCLUDED.annual,
+  sick = EXCLUDED.sick,
+  personal = EXCLUDED.personal;
 
 -- 插入日历事件
 INSERT INTO calendar_events (employee_id, event_date, title, event_type)

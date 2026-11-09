@@ -323,7 +323,7 @@ async def handle_submit_leave_request(params: dict) -> dict:
             start_date=start_date,
             end_date=end_date,
             reason=reason,
-            approver=f"{emp_mgr} (直属主管) / 陈敏 (财务复核)"
+            approver=f"{emp_mgr} (直属主管)"
         )
     except ValueError as e:
         return {
@@ -703,8 +703,23 @@ async def handle_review_approval_request(params: dict) -> dict:
     if not approval_id:
         pending = adapter.get_pending_approvals(approver_name)
         target_applicant = params.get("applicant_name")
+        target_type = params.get("approval_type") or params.get("type")
         if target_applicant:
             matched = [p for p in pending if p.get("applicant") == target_applicant]
+            # 意图智能感知：根据 comment 或类型参数优先匹配对应类别的待审单据
+            comment_text = params.get("comment", "")
+            if "假" in comment_text or (target_type and "假" in target_type):
+                leave_matched = [p for p in matched if "假" in (p.get("approval_type") or "") or p.get("approval_type") in ("annual", "sick", "personal", "leave") or str(p.get("id", "")).startswith("APR-")]
+                if leave_matched:
+                    matched = leave_matched
+            elif "报销" in comment_text or (target_type and "报销" in target_type):
+                exp_matched = [p for p in matched if "报销" in (p.get("approval_type") or "") or str(p.get("id", "")).startswith("EXP-")]
+                if exp_matched:
+                    matched = exp_matched
+            elif "调动" in comment_text or "转岗" in comment_text or (target_type and ("调动" in target_type or "转岗" in target_type)):
+                trf_matched = [p for p in matched if "调动" in (p.get("approval_type") or "") or str(p.get("id", "")).startswith("TRF-")]
+                if trf_matched:
+                    matched = trf_matched
             if matched:
                 approval_id = matched[0].get("id")
         elif len(pending) == 1:

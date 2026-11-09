@@ -296,6 +296,18 @@ def init_db() -> bool:
                             approver = '陈敏 (财务复核)',
                             comment = '直属主管[李伟]审批通过：同意报销申请，费用明细合规，已流转至财务专员【陈敏】复核'
                         WHERE id = 'EXP-977' AND (approver = '李伟' OR status = 'approved');
+                        -- 修复 APR-569 年假单流转：直属主管赵静审批通过即办结，非报销类单据绝不流转财务
+                        UPDATE approvals
+                        SET status = 'approved',
+                            approver = '赵静',
+                            comment = '直属主管[赵静]审批通过：同意申请'
+                        WHERE id = 'APR-569' AND (approver LIKE '%陈敏%' OR status = 'pending');
+                        UPDATE leave_balances
+                        SET annual = 11.0
+                        WHERE employee_id = 'E10456' AND annual = 12.0;
+                        INSERT INTO calendar_events (employee_id, event_date, title, event_type)
+                        VALUES ('E10456', '2026-11-16', '请假(annual) - 王芳', 'holiday')
+                        ON CONFLICT DO NOTHING;
                         """
                     )
                     conn.commit()
@@ -864,8 +876,13 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
                         FROM approvals
                         WHERE status IN ('pending', '待审批')
                           AND (approver = %s OR approver = %s OR approver LIKE %s)
-                          AND COALESCE(comment, '') NOT LIKE '%%直属主管%%审批通过%%'
-                          AND COALESCE(comment, '') NOT LIKE '%%转出主管%%审批通过%%'
+                          AND (
+                            (approval_type NOT IN ('差旅报销', '费用报销', '转岗调动') AND id NOT LIKE 'EXP-%%' AND id NOT LIKE 'TRF-%%')
+                            OR (
+                              COALESCE(comment, '') NOT LIKE '%%直属主管%%审批通过%%'
+                              AND COALESCE(comment, '') NOT LIKE '%%转出主管%%审批通过%%'
+                            )
+                          )
                         ORDER BY request_date DESC;
                         """,
                         (manager_name, manager_name_or_id, f"%{manager_name}%")
@@ -1006,8 +1023,28 @@ def update_approval_status(
 
     curr_approver_str = str((curr_approval or {}).get("approver") or "")
     app_type = str((curr_approval or {}).get("approval_type") or (curr_approval or {}).get("type") or "")
-    is_expense = approval_id.startswith("EXP-") or any(k in app_type for k in ["报销", "费用"]) or ("财务" in curr_approver_str) or ("陈敏" in curr_approver_str)
-    is_transfer = approval_id.startswith("TRF-") or any(k in app_type for k in ["转岗", "调动"]) or ("HRBP" in curr_approver_str) or ("王芳" in curr_approver_str and "转出" in curr_approver_str)
+    app_type_lower = app_type.lower()
+    
+    # 业务单据类型排他性判定
+    # 1. 请假/休假类型 (annual, sick, personal, 假, leave 等)：直属主管单级审批即终态办结，绝不流转财务
+    is_leave = any(k in app_type_lower for k in ["annual", "sick", "personal", "marriage", "maternity", "paternity", "bereavement", "假", "leave"])
+    
+    # 2. 转岗调动类型 (TRF-, 转岗, 调动)：双级审批 (转出主管 -> HRBP王芳)
+    is_transfer = not is_leave and (
+        approval_id.startswith("TRF-") 
+        or any(k in app_type for k in ["转岗", "调动"]) 
+        or ("HRBP" in curr_approver_str) 
+        or ("王芳" in curr_approver_str and "转出" in curr_approver_str)
+    )
+    
+    # 3. 报销类型 (EXP-, 报销, 费用)：双级审批 (直属主管 -> 财务专员陈敏)
+    # 排除休假、出差及转岗，避免请假单仅因历史 approver 字段误带财务/陈敏被误判为报销
+    is_expense = not is_leave and not is_transfer and (
+        approval_id.startswith("EXP-") 
+        or any(k in app_type for k in ["报销", "费用"]) 
+        or (("财务" in curr_approver_str or "陈敏" in curr_approver_str) and not approval_id.startswith("APR-") and not approval_id.startswith("TRV-"))
+    )
+
     is_finance_actor = (manager_name == "陈敏" or approver_name_or_id in ("E10501", "陈敏") or "财务" in manager_name)
     is_hrbp_actor = (manager_name == "王芳" or approver_name_or_id in ("E10456", "王芳") or "HR" in manager_name)
 
@@ -1052,6 +1089,17 @@ def update_approval_status(
             prev_com = (curr_approval or {}).get("comment")
             next_comment = f"{prev_com} | HRBP[{manager_name}]办理通过：{final_comment}" if prev_com else f"HRBP[{manager_name}]办理通过：{final_comment}"
             result_message = f"转岗申请 {approval_id} HRBP办理通过，人事调动生效。"
+    elif is_leave:
+        if norm_decision == "rejected":
+            next_status = "rejected"
+            next_approver = f"{manager_name} (直属主管-已驳回)"
+            next_comment = f"直属主管[{manager_name}]审批驳回：{final_comment}"
+            result_message = f"审批单 {approval_id} 已被直属主管【{manager_name}】驳回。"
+        else:
+            next_status = "approved"
+            next_approver = manager_name
+            next_comment = f"直属主管[{manager_name}]审批通过：{final_comment}"
+            result_message = f"审批单 {approval_id} 直属主管审批通过，假期已生效。"
 
     try:
         with get_db_connection() as conn:

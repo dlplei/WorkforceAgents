@@ -92,17 +92,20 @@ def test_hitl_action_api():
     assert data["success"] is True
     print("✅ 4. /api/hitl/action 拒绝取消操作验证通过")
 
-    # 2. 测试批准执行入库 (使用唯一日期避免测试防重冲突)
+    # 2. 测试批准执行入库 (使用唯一动态年份与日期避免测试防重冲突)
     import time
-    unique_day = int(time.time() % 20) + 10
+    ts = int(time.time() * 1000)
+    year = 2040 + (ts % 20)
+    month = (ts % 12) + 1
+    day = (ts % 25) + 1
     approve_payload = {
-        "action_id": f"hitl_mock_{int(time.time())}",
+        "action_id": f"hitl_mock_{ts}",
         "tool_name": "submit_leave_request",
         "decision": "approve",
         "arguments": {
             "leave_type": "annual",
-            "start_date": f"2029-11-{unique_day:02d}",
-            "end_date": f"2029-11-{unique_day:02d}",
+            "start_date": f"{year:04d}-{month:02d}-{day:02d}",
+            "end_date": f"{year:04d}-{month:02d}-{day:02d}",
             "reason": "个人年假单测",
         },
     }

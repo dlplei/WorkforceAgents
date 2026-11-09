@@ -118,6 +118,7 @@ class TestManagerApproval(unittest.TestCase):
 
     def test_approval_history_endpoint(self):
         """测试审批中心历史流水归档接口 (/api/approvals/history)"""
+        # 1. 测试主管视角 (李伟)
         res = self.client.get(
             "/api/approvals/history",
             headers={"X-Employee-Id": "E10001"}
@@ -126,10 +127,54 @@ class TestManagerApproval(unittest.TestCase):
         history = res.json()
         self.assertIsInstance(history, list)
         self.assertGreaterEqual(len(history), 1)
-        # 校验所有历史记录均为终态
         for h in history:
             self.assertIn(h.get("status"), ("approved", "rejected", "已批准", "已驳回"))
             self.assertIsNotNone(h.get("comment"))
+
+        # 2. 测试财务视角 (陈敏)，必须能查到财务复核通过/驳回的报销单历史，绝不能混入仅李伟审批/驳回的单据
+        res_finance = self.client.get(
+            "/api/approvals/history",
+            headers={"X-Employee-Id": "E10501"}
+        )
+        self.assertEqual(res_finance.status_code, 200)
+        finance_history = res_finance.json()
+        self.assertIsInstance(finance_history, list)
+        self.assertGreaterEqual(len(finance_history), 1)
+        # 验证财务历史全部为终态，且全部为陈敏/财务复核经办或陈敏本人单据
+        for fh in finance_history:
+            self.assertIn(fh.get("status"), ("approved", "rejected", "已批准", "已驳回"))
+            self.assertNotIn(fh.get("id"), ("APR-569", "EXP-499", "EXP-750", "EXP-118", "EXP-433"))
+            is_chenmin_related = (
+                fh.get("employee_id") == "E10501"
+                or "陈敏" in str(fh.get("approver", ""))
+                or "财务" in str(fh.get("approver", ""))
+                or "陈敏" in str(fh.get("comment", ""))
+                or "财务" in str(fh.get("comment", ""))
+            )
+            self.assertTrue(is_chenmin_related, f"陈敏审批历史中混入了未经财务复核的单据: {fh}")
+
+        # 3. 测试 HRBP 视角 (王芳)，只展示经王芳办理或王芳本人单据，不得混入李伟或陈敏独立审批的单据
+        res_hr = self.client.get(
+            "/api/approvals/history",
+            headers={"X-Employee-Id": "E10456"}
+        )
+        self.assertEqual(res_hr.status_code, 200)
+        hr_history = res_hr.json()
+        self.assertIsInstance(hr_history, list)
+        self.assertGreaterEqual(len(hr_history), 1)
+        for hh in hr_history:
+            self.assertIn(hh.get("status"), ("approved", "rejected", "已批准", "已驳回"))
+            # 必须为王芳本人提交，或经由王芳/HRBP办理
+            is_wangfang_related = (
+                hh.get("employee_id") == "E10456"
+                or "王芳" in str(hh.get("approver", ""))
+                or "HRBP" in str(hh.get("approver", ""))
+                or "王芳" in str(hh.get("comment", ""))
+                or "HRBP" in str(hh.get("comment", ""))
+            )
+            self.assertTrue(is_wangfang_related, f"王芳审批历史中混入了无关单据: {hh}")
+            # 明确排除陈敏复核的纯财务报销单及李伟单独审批的休假单
+            self.assertNotIn(hh.get("id"), ("EXP-279", "EXP-159", "APR-002", "APR-101"))
 
     def test_agent_tool_query_approval_status_without_id(self):
         """测试 Agent 工具层 handle_query_approval_status 在无单号输入时的智能推断检索"""

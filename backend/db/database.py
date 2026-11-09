@@ -689,6 +689,7 @@ def query_approvals(
     cur_name = cur_emp.name if cur_emp else ""
     is_mgr = bool(cur_emp and (cur_emp.level.startswith("M") or "主管" in cur_emp.position or "总监" in cur_emp.position))
     is_hr = bool(cur_emp and ("HR" in cur_emp.department or "HR" in cur_emp.position or cur_emp.name == "王芳"))
+    is_finance = bool(cur_emp and ("财务" in cur_emp.department or "财务" in cur_emp.position or cur_emp.name == "陈敏" or cur_emp.id == "E10501"))
 
     norm_status = None
     if status and str(status).lower() not in ("all", "全部"):
@@ -698,7 +699,7 @@ def query_approvals(
         elif sl in ("rejected", "已驳回", "驳回", "拒绝"): norm_status = "rejected"
         else: norm_status = status
 
-    eff_scope = scope or ("all" if is_hr else ("my_approvals" if (is_mgr and (norm_status or applicant_name)) else ("all" if is_mgr else "my_requests")))
+    eff_scope = scope or ("hr" if is_hr else ("finance" if is_finance else ("my_approvals" if (is_mgr and (norm_status or applicant_name)) else ("all" if is_mgr else "my_requests"))))
 
     try:
         with get_db_connection() as conn:
@@ -707,19 +708,23 @@ def query_approvals(
                 if request_id:
                     where.append("id = %s")
                     params.append(request_id)
-                    if not (is_mgr or is_hr):
+                    if not (is_mgr or is_hr or is_finance):
                         where.append("(employee_id = %s OR approver = %s OR approver = %s)")
                         params.extend([employee_id, cur_name, employee_id])
                 else:
                     if eff_scope == "my_requests":
                         where.append("employee_id = %s"); params.append(employee_id)
-                    elif eff_scope == "my_approvals" and not is_hr:
-                        where.append("(approver = %s OR approver = %s)"); params.extend([cur_name, employee_id])
-                    elif eff_scope == "all" and not is_hr:
-                        if is_mgr:
-                            where.append("(employee_id = %s OR approver = %s OR approver = %s)")
-                            params.extend([employee_id, cur_name, employee_id])
-                        else:
+                    elif eff_scope == "finance":
+                        where.append("(employee_id = %s OR approver LIKE %s OR approver LIKE %s OR comment LIKE %s OR comment LIKE %s)")
+                        params.extend([employee_id, f"%{cur_name}%", "%财务%", f"%{cur_name}%", "%财务%"])
+                    elif eff_scope == "hr":
+                        where.append("(employee_id = %s OR approver = %s OR approver LIKE %s OR approver LIKE %s OR comment LIKE %s OR comment LIKE %s OR approval_type IN ('在职证明开具'))")
+                        params.extend([employee_id, cur_name, f"%{cur_name}%", "%HRBP%", f"%{cur_name}%", "%HRBP%"])
+                    elif eff_scope == "my_approvals":
+                        where.append("(employee_id = %s OR approver = %s OR approver = %s OR approver LIKE %s OR comment LIKE %s)")
+                        params.extend([employee_id, cur_name, employee_id, f"%{cur_name}%", f"%[{cur_name}]%"])
+                    elif eff_scope == "all":
+                        if not (is_mgr or is_hr or is_finance):
                             where.append("employee_id = %s"); params.append(employee_id)
                     if norm_status:
                         where.append("status = %s"); params.append(norm_status)
@@ -754,18 +759,42 @@ def query_approvals(
     results = list(_in_memory_approvals)
     if request_id:
         results = [a for a in results if a.get("id") == request_id or a.get("approval_id") == request_id]
-        if not (is_mgr or is_hr):
+        if not (is_mgr or is_hr or is_finance):
             results = [a for a in results if a.get("employee_id") == employee_id or a.get("approver") in (cur_name, employee_id)]
         return sanitize_db_output(results)
 
     if eff_scope == "my_requests":
         results = [a for a in results if a.get("employee_id") == employee_id]
-    elif eff_scope == "my_approvals" and not is_hr:
-        results = [a for a in results if a.get("approver") in (cur_name, employee_id)]
-    elif eff_scope == "all" and not is_hr:
-        if is_mgr:
-            results = [a for a in results if a.get("employee_id") == employee_id or a.get("approver") in (cur_name, employee_id)]
-        else:
+    elif eff_scope == "finance":
+        results = [
+            a for a in results
+            if a.get("employee_id") == employee_id
+            or cur_name in str(a.get("approver", ""))
+            or "财务" in str(a.get("approver", ""))
+            or cur_name in str(a.get("comment", ""))
+            or "财务" in str(a.get("comment", ""))
+        ]
+    elif eff_scope == "hr":
+        results = [
+            a for a in results
+            if a.get("employee_id") == employee_id
+            or a.get("approver") == cur_name
+            or cur_name in str(a.get("approver", ""))
+            or "HRBP" in str(a.get("approver", ""))
+            or cur_name in str(a.get("comment", ""))
+            or "HRBP" in str(a.get("comment", ""))
+            or str(a.get("approval_type", "")) in ("在职证明开具",)
+        ]
+    elif eff_scope == "my_approvals":
+        results = [
+            a for a in results
+            if a.get("employee_id") == employee_id
+            or a.get("approver") in (cur_name, employee_id)
+            or cur_name in str(a.get("approver", ""))
+            or f"[{cur_name}]" in str(a.get("comment", ""))
+        ]
+    elif eff_scope == "all":
+        if not (is_mgr or is_hr or is_finance):
             results = [a for a in results if a.get("employee_id") == employee_id]
 
     if norm_status:

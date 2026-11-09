@@ -221,11 +221,20 @@ async def get_approval_history(
     is_hr = bool("HR" in emp.department or "HR" in emp.position or emp.name == "王芳")
     is_finance = bool("财务" in emp.department or "财务" in emp.position or emp.name == "陈敏" or emp.id == "E10501")
     
-    # 获取非 pending 状态的记录
+    # 获取非 pending 状态的记录（审批中心历史 Tab 按经办身份隔离）
+    if is_finance:
+        scope = "finance"
+    elif is_hr:
+        scope = "hr"
+    elif is_mgr:
+        scope = "my_approvals"
+    else:
+        scope = "my_requests"
+
     items = adapter.get_approvals(
         employee_id=emp.id,
         status=None,
-        scope="my_approvals" if (is_mgr and not is_hr and not is_finance) else ("all" if (is_hr or is_finance) else "my_requests"),
+        scope=scope,
         applicant_name=applicant_name,
         start_date=start_date,
         end_date=end_date,

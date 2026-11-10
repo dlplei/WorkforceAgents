@@ -9,6 +9,8 @@ import logging
 from typing import Dict, Callable, Any, Optional, List
 from models import ToolResult, HitlActionRequest
 from services.hr_adapter import get_hr_adapter
+from services.permission_service import PermissionService
+from services.policy_config import infer_city_tier, get_travel_rates
 from db.database import (
     get_current_employee,
     check_duplicate_document,
@@ -86,21 +88,16 @@ class ToolRegistry:
         current_emp = get_current_employee()
         current_emp_id = current_emp["id"] if isinstance(current_emp, dict) else getattr(current_emp, "id", "E10293")
         current_emp_name = current_emp["name"] if isinstance(current_emp, dict) else getattr(current_emp, "name", "张明")
-        current_emp_level = current_emp["level"] if isinstance(current_emp, dict) else getattr(current_emp, "level", "P6")
-        is_manager = current_emp_level.startswith("M") or "总监" in str(current_emp) or current_emp_id == "E10001"
-        is_hrbp = current_emp_id == "E10456" or "HRBP" in (current_emp["position"] if isinstance(current_emp, dict) else getattr(current_emp, "position", ""))
 
         target_emp_id = arguments.get("employee_id")
-        if target_emp_id and str(target_emp_id).strip() != current_emp_id:
-            # 审批类工具或管理/HRBP角色放行下属查询
-            if not (is_manager or is_hrbp or name in ("review_approval_request", "query_pending_approvals")):
-                logger.warning(f"🔒 [RBAC 越权拦截] 员工 {current_emp_id} 试图访问他人工号: {target_emp_id} 的工具 {name}")
-                return ToolResult(
-                    tool_name=name,
-                    success=False,
-                    error=f"【权限拦截 (RBAC)】当前登录员工【{current_emp_name} ({current_emp_id})】无权访问或操作其他员工（工号: {target_emp_id}）的数据。根据企业数据安全与保密管理办法，普通员工仅限办理与查看本人名下事务。",
-                    execution_time=0.0,
-                )
+        if target_emp_id and not PermissionService.can_access_target_employee(current_emp, target_emp_id, tool_name=name):
+            logger.warning(f"🔒 [RBAC 越权拦截] 员工 {current_emp_id} 试图访问他人工号: {target_emp_id} 的工具 {name}")
+            return ToolResult(
+                tool_name=name,
+                success=False,
+                error=f"【权限拦截 (RBAC)】当前登录员工【{current_emp_name} ({current_emp_id})】无权访问或操作其他员工（工号: {target_emp_id}）的数据。根据企业数据安全与保密管理办法，普通员工仅限办理与查看本人名下事务。",
+                execution_time=0.0,
+            )
 
         start = time.perf_counter()
         try:
@@ -449,23 +446,6 @@ registry.register(
 )
 
 
-def infer_city_tier(city: str) -> str:
-    """根据城市名自动判定城市等级（一线/二线/三线及以下）"""
-    city_str = str(city or "").strip()
-    tier1 = ["北京", "上海", "广州", "深圳"]
-    tier2 = [
-        "杭州", "成都", "武汉", "南京", "西安", "重庆", "苏州",
-        "天津", "长沙", "郑州", "东莞", "青岛", "合肥", "佛山", "宁波"
-    ]
-    for c in tier1:
-        if c in city_str:
-            return "一线"
-    for c in tier2:
-        if c in city_str:
-            return "二线"
-    return "三线及以下"
-
-
 # 7. 计算差旅预算
 async def handle_calculate_travel_budget(params: dict) -> dict:
     days = int(params["days"])
@@ -473,15 +453,7 @@ async def handle_calculate_travel_budget(params: dict) -> dict:
     emp = get_current_employee()
     level = emp["level"]
 
-    accommodation = {
-        "一线": {"P5": 400, "P6": 600, "P7": 600, "P8": 1000},
-        "二线": {"P5": 300, "P6": 500, "P7": 500, "P8": 800},
-        "三线及以下": {"P5": 250, "P6": 400, "P7": 400, "P8": 600},
-    }
-    meal = {"一线": 100, "二线": 80, "三线及以下": 60}
-
-    acc_rate = accommodation.get(tier, {}).get(level, 400)
-    meal_rate = meal.get(tier, 80)
+    acc_rate, meal_rate = get_travel_rates(tier, level)
 
     return {
         "success": True,

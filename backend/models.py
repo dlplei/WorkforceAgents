@@ -1,9 +1,47 @@
 """
 数据模型定义
 """
+from enum import Enum
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
+
+
+# ============ 领域枚举定义 ============
+
+class SystemRole(str, Enum):
+    """系统角色枚举"""
+    EMPLOYEE = "employee"      # 普通员工
+    MANAGER = "manager"        # 直属主管/管理层
+    HR = "hr"                  # 人力资源专员
+    HRBP = "hrbp"              # 业务人力资源伙伴
+    FINANCE = "finance"        # 财务专员/复核
+    ADMIN = "admin"            # 系统管理员/高管
+
+
+class ApprovalStatus(str, Enum):
+    """审批单状态枚举"""
+    PENDING = "pending"        # 待审批
+    APPROVED = "approved"      # 已批准
+    REJECTED = "rejected"      # 已驳回
+
+
+class ApprovalCategory(str, Enum):
+    """单据业务类型枚举"""
+    LEAVE = "leave"            # 休假申请
+    EXPENSE = "expense"        # 费用报销
+    TRAVEL = "travel"          # 出差申请
+    TRANSFER = "transfer"      # 转岗调动
+    DOCUMENT = "document"      # 人事证明
+    GENERAL = "general"        # 通用业务
+
+
+class CityTier(str, Enum):
+    """差旅城市级别"""
+    TIER1 = "一线"
+    TIER2 = "二线"
+    TIER3 = "三线及以下"
+
 
 
 # ============ LLM 相关 ============
@@ -104,9 +142,13 @@ class EmployeeProfile(BaseModel):
     contract_type: str
     leave_balance: LeaveBalance
     benefits: List[str]
+    roles: List[str] = Field(default_factory=lambda: ["employee"])
 
     def __getitem__(self, item: str):
         return getattr(self, item)
+
+    def get(self, item: str, default: Any = None):
+        return getattr(self, item, default)
 
 
 class ApprovalActionRequest(BaseModel):

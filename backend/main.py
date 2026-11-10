@@ -30,6 +30,7 @@ from db.database import (
     check_duplicate_document,
 )
 from models import ApprovalActionRequest, ApprovalActionResponse
+from services.permission_service import PermissionService
 from services.hr_adapter import get_hr_adapter
 from services.metrics_service import record_hitl_action
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -217,16 +218,13 @@ async def get_approval_history(
     """获取审批归档历史流水（已批准/已驳回，供前端审批中心历史 Tab 查看）"""
     emp = get_current_employee()
     adapter = get_hr_adapter()
-    is_mgr = bool(emp.level.startswith("M") or "主管" in emp.position or "总监" in emp.position)
-    is_hr = bool("HR" in emp.department or "HR" in emp.position or emp.name == "王芳")
-    is_finance = bool("财务" in emp.department or "财务" in emp.position or emp.name == "陈敏" or emp.id == "E10501")
     
     # 获取非 pending 状态的记录（审批中心历史 Tab 按经办身份隔离）
-    if is_finance:
+    if PermissionService.is_finance(emp):
         scope = "finance"
-    elif is_hr:
+    elif PermissionService.is_hr(emp):
         scope = "hr"
-    elif is_mgr:
+    elif PermissionService.is_manager(emp):
         scope = "my_approvals"
     else:
         scope = "my_requests"

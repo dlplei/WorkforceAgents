@@ -10,7 +10,8 @@ from datetime import date, datetime
 import contextvars
 from typing import Optional, List, Dict, Any
 import psycopg
-from models import EmployeeProfile, LeaveBalance
+from models import EmployeeProfile, LeaveBalance, SystemRole
+from services.permission_service import PermissionService
 
 from psycopg.rows import dict_row
 
@@ -75,6 +76,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=20, sick=10, personal=5),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"],
+        roles=[SystemRole.EMPLOYEE.value, SystemRole.MANAGER.value, SystemRole.ADMIN.value],
     ),
     "E10001": EmployeeProfile(
         id="E10001",
@@ -88,6 +90,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=15, sick=10, personal=5),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"],
+        roles=[SystemRole.EMPLOYEE.value, SystemRole.MANAGER.value],
     ),
     "E10293": EmployeeProfile(
         id="E10293",
@@ -101,6 +104,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=7, sick=5, personal=2),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+        roles=[SystemRole.EMPLOYEE.value],
     ),
     "E10301": EmployeeProfile(
         id="E10301",
@@ -114,6 +118,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=8, sick=5, personal=3),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+        roles=[SystemRole.EMPLOYEE.value],
     ),
     "E10456": EmployeeProfile(
         id="E10456",
@@ -127,6 +132,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=12, sick=8, personal=3),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作", "股票期权"],
+        roles=[SystemRole.EMPLOYEE.value, SystemRole.HR.value, SystemRole.HRBP.value],
     ),
     "E10401": EmployeeProfile(
         id="E10401",
@@ -140,6 +146,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=5, sick=5, personal=1),
         benefits=["五险一金", "补充商业保险", "年度体检"],
+        roles=[SystemRole.EMPLOYEE.value, SystemRole.HR.value],
     ),
     "E10501": EmployeeProfile(
         id="E10501",
@@ -153,6 +160,7 @@ MOCK_EMPLOYEES: Dict[str, EmployeeProfile] = {
         contract_type="全职",
         leave_balance=LeaveBalance(annual=10, sick=5, personal=2),
         benefits=["五险一金", "补充商业保险", "年度体检", "弹性工作"],
+        roles=[SystemRole.EMPLOYEE.value, SystemRole.FINANCE.value],
     ),
 }
 
@@ -687,9 +695,9 @@ def query_approvals(
     """全维度审批单查询（支持单号、申请人、起止日期、审批状态、经办视角复合过滤）"""
     cur_emp = get_employee(employee_id)
     cur_name = cur_emp.name if cur_emp else ""
-    is_mgr = bool(cur_emp and (cur_emp.level.startswith("M") or "主管" in cur_emp.position or "总监" in cur_emp.position))
-    is_hr = bool(cur_emp and ("HR" in cur_emp.department or "HR" in cur_emp.position or cur_emp.name == "王芳"))
-    is_finance = bool(cur_emp and ("财务" in cur_emp.department or "财务" in cur_emp.position or cur_emp.name == "陈敏" or cur_emp.id == "E10501"))
+    is_mgr = PermissionService.is_manager(cur_emp)
+    is_hr = PermissionService.is_hr(cur_emp)
+    is_finance = PermissionService.is_finance(cur_emp)
 
     norm_status = None
     if status and str(status).lower() not in ("all", "全部"):
@@ -699,7 +707,9 @@ def query_approvals(
         elif sl in ("rejected", "已驳回", "驳回", "拒绝"): norm_status = "rejected"
         else: norm_status = status
 
-    eff_scope = scope or ("hr" if is_hr else ("finance" if is_finance else ("my_approvals" if (is_mgr and (norm_status or applicant_name)) else ("all" if is_mgr else "my_requests"))))
+    eff_scope = scope or PermissionService.determine_approval_scope(
+        cur_emp, requested_scope=scope, status=norm_status, applicant_name=applicant_name
+    )
 
     try:
         with get_db_connection() as conn:
@@ -857,13 +867,19 @@ def deduct_leave_balance(employee_id: str, leave_type: str = "annual", days: flo
 def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[str, Any]]:
     """查询等待当前节点审批人处理的待办单据"""
     manager_name = manager_name_or_id
+    emp = None
     if manager_name_or_id.startswith("E") or manager_name_or_id.startswith("M"):
         emp = get_employee(manager_name_or_id)
         if emp:
             manager_name = emp.name
+    else:
+        for m_emp in MOCK_EMPLOYEES.values():
+            if m_emp.name == manager_name_or_id:
+                emp = m_emp
+                break
 
-    is_finance = manager_name == "陈敏" or manager_name_or_id in ("E10501", "陈敏") or "财务" in manager_name
-    is_hrbp = manager_name == "王芳" or manager_name_or_id in ("E10456", "王芳") or "HR" in manager_name
+    is_finance = PermissionService.is_finance(emp) or "财务" in manager_name
+    is_hrbp = PermissionService.is_hrbp(emp) or "HRBP" in manager_name or "HR" in manager_name
 
     try:
         with get_db_connection() as conn:
@@ -1074,8 +1090,17 @@ def update_approval_status(
         or (("财务" in curr_approver_str or "陈敏" in curr_approver_str) and not approval_id.startswith("APR-") and not approval_id.startswith("TRV-"))
     )
 
-    is_finance_actor = (manager_name == "陈敏" or approver_name_or_id in ("E10501", "陈敏") or "财务" in manager_name)
-    is_hrbp_actor = (manager_name == "王芳" or approver_name_or_id in ("E10456", "王芳") or "HR" in manager_name)
+    actor_emp = None
+    if approver_name_or_id.startswith("E") or approver_name_or_id.startswith("M"):
+        actor_emp = get_employee(approver_name_or_id)
+    if not actor_emp:
+        for m_emp in MOCK_EMPLOYEES.values():
+            if m_emp.name == manager_name:
+                actor_emp = m_emp
+                break
+
+    is_finance_actor = PermissionService.is_finance(actor_emp) or "财务" in manager_name
+    is_hrbp_actor = PermissionService.is_hrbp(actor_emp) or "HRBP" in manager_name or "HR" in manager_name
 
     next_status = norm_decision
     next_approver = manager_name

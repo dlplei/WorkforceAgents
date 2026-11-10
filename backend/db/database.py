@@ -207,6 +207,21 @@ def init_db() -> bool:
                             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                             metadata JSONB DEFAULT '{}'::jsonb
                         );
+
+                        CREATE TABLE IF NOT EXISTS hr_tickets (
+                            id VARCHAR(50) PRIMARY KEY,
+                            employee_id VARCHAR(50) REFERENCES employees(id) ON DELETE CASCADE,
+                            applicant VARCHAR(100) NOT NULL,
+                            category VARCHAR(50) NOT NULL,
+                            title VARCHAR(200) NOT NULL,
+                            description TEXT NOT NULL,
+                            priority VARCHAR(50) DEFAULT 'medium',
+                            status VARCHAR(50) DEFAULT 'open',
+                            assigned_to VARCHAR(100),
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            external_system_id VARCHAR(100)
+                        );
+                        ALTER TABLE hr_tickets ADD COLUMN IF NOT EXISTS assigned_to VARCHAR(100);
                         """
                     )
                     conn.commit()
@@ -327,6 +342,41 @@ def init_db() -> bool:
         return False
 
 
+def infer_employee_roles(
+    emp_id: str,
+    department: str = "",
+    position: str = "",
+    level: str = "",
+    manager_name: Optional[str] = None
+) -> List[str]:
+    """
+    根据员工档案动态解析/推断系统角色集（RBAC/ABAC 角色自适应装配）：
+    - 优先继承预设角色
+    - 自适应推断 HRBP、HR、FINANCE、MANAGER、EMPLOYEE 角色属性。
+    """
+    if emp_id in MOCK_EMPLOYEES and MOCK_EMPLOYEES[emp_id].roles:
+        return list(set(MOCK_EMPLOYEES[emp_id].roles))
+
+    roles = {SystemRole.EMPLOYEE.value}
+    pos_lower = (position or "").lower()
+    dept_lower = (department or "").lower()
+    lvl_lower = (level or "").lower()
+
+    if "hrbp" in pos_lower or "hrbp" in lvl_lower:
+        roles.add(SystemRole.HR.value)
+        roles.add(SystemRole.HRBP.value)
+    elif any(k in dept_lower for k in ["人力", "人事", "hr"]) or any(k in pos_lower for k in ["招聘", "员工关系", "人事", "hr", "ssc"]):
+        roles.add(SystemRole.HR.value)
+
+    if any(k in dept_lower for k in ["财务", "finance"]) or any(k in pos_lower for k in ["财务", "报销", "会计", "出纳"]):
+        roles.add(SystemRole.FINANCE.value)
+
+    if any(k in pos_lower for k in ["总监", "经理", "主管", "vp", "副总裁", "负责人", "leader", "director", "manager"]):
+        roles.add(SystemRole.MANAGER.value)
+
+    return sorted(list(roles))
+
+
 def get_employee(employee_id: Optional[str] = None) -> Optional[EmployeeProfile]:
     """获取员工档案数据"""
     target_id = employee_id or get_current_employee_id()
@@ -350,6 +400,14 @@ def get_employee(employee_id: Optional[str] = None) -> Optional[EmployeeProfile]
                 if isinstance(benefits, str):
                     benefits = json.loads(benefits)
 
+                emp_roles = infer_employee_roles(
+                    emp_id=row["id"],
+                    department=row["department"] or "",
+                    position=row["position"] or "",
+                    level=row["level"] or "",
+                    manager_name=row["manager"] or "",
+                )
+
                 return EmployeeProfile(
                     id=row["id"],
                     name=row["name"],
@@ -365,7 +423,8 @@ def get_employee(employee_id: Optional[str] = None) -> Optional[EmployeeProfile]
                         sick=int(row["sick"]) if row["sick"] is not None else 0,
                         personal=int(row["personal"]) if row["personal"] is not None else 0,
                     ),
-                    benefits=benefits or []
+                    benefits=benefits or [],
+                    roles=emp_roles
                 )
     except Exception:
         return MOCK_EMPLOYEES.get(target_id) or MOCK_EMPLOYEES.get(DEFAULT_EMPLOYEE_ID)
@@ -400,6 +459,13 @@ def get_all_employees() -> List[EmployeeProfile]:
                         b = row["benefits"]
                         if isinstance(b, str):
                             b = json.loads(b)
+                        emp_roles = infer_employee_roles(
+                            emp_id=row["id"],
+                            department=row["department"] or "",
+                            position=row["position"] or "",
+                            level=row["level"] or "",
+                            manager_name=row["manager"] or "",
+                        )
                         res.append(EmployeeProfile(
                             id=row["id"],
                             name=row["name"],
@@ -415,7 +481,8 @@ def get_all_employees() -> List[EmployeeProfile]:
                                 sick=int(row["sick"]) if row["sick"] is not None else 0,
                                 personal=int(row["personal"]) if row["personal"] is not None else 0,
                             ),
-                            benefits=b or []
+                            benefits=b or [],
+                            roles=emp_roles
                         ))
                     # 确保张明、李伟、王芳三大 Persona 完备
                     existing_ids = {r.id for r in res}
@@ -556,7 +623,7 @@ _in_memory_tickets: List[Dict[str, Any]] = [
         "description": "请协助开具近期连续6个月公积金缴存证明",
         "priority": "medium",
         "status": "resolved",
-        "assigned_to": "HR服务专员 (李莉)",
+        "assigned_to": "刘洋 (HR专员 / 招聘与员工关系)",
         "created_at": "2026-04-01 10:20:00",
         "external_system_id": "SN-INC-10921"
     }
@@ -1259,6 +1326,144 @@ def update_approval_status(
 
 
 
+def find_hrbp_for_employee(employee_name_or_id: Optional[str] = None) -> Optional[EmployeeProfile]:
+    """
+    根据员工组织上下文动态匹配对口 HRBP（业务人力资源伙伴）：
+    业界最佳实践（Ulrich 3-Tier Delivery Model）：
+    1. 动态获取提单员工档案及其所属部门/汇报线；
+    2. 优先匹配与提单员工同部门、且具备 SystemRole.HRBP 角色（或岗位名称包含 HRBP）的专员；
+    3. 若部门未设立独立 HRBP，则回溯至组织级 HRBP 人选池；
+    4. 完全杜绝代码硬编码人员姓名，保证人员调动/更迭时系统零改动自适应。
+    """
+    all_emps = get_all_employees()
+    if not all_emps:
+        return None
+
+    target_emp = None
+    if employee_name_or_id:
+        target_str = str(employee_name_or_id).strip()
+        for e in all_emps:
+            if e.id == target_str or e.name == target_str:
+                target_emp = e
+                break
+
+    # 动态筛选具备 HRBP 系统角色或职位的候选人
+    hrbp_candidates = [
+        e for e in all_emps
+        if (SystemRole.HRBP.value in (e.roles or []))
+        or ("hrbp" in (e.position or "").lower())
+        or ("hrbp" in (e.level or "").lower())
+    ]
+    if not hrbp_candidates:
+        return None
+
+    # 若指定了员工，优先尝试同部门对口匹配
+    if target_emp:
+        dept_matched = [e for e in hrbp_candidates if e.department == target_emp.department]
+        if dept_matched:
+            return dept_matched[0]
+
+    # 回退到组织级候选池首选 HRBP
+    return hrbp_candidates[0]
+
+
+def find_specialist_by_role(
+    role: SystemRole,
+    department_hint: Optional[str] = None,
+    position_keywords: Optional[List[str]] = None,
+    exclude_roles: Optional[List[str]] = None
+) -> Optional[EmployeeProfile]:
+    """
+    根据系统角色、部门偏好与岗位职责特征动态检索专业领域专家（COE / HRSSC 专员）：
+    业界最佳实践：通过角色与技能属性（Attribute-Based Access/Routing）动态匹配在职人员，避免耦合具体人员姓名。
+    """
+    all_emps = get_all_employees()
+    if not all_emps:
+        return None
+
+    exclude_set = set(exclude_roles or [])
+    matched_candidates = []
+
+    for e in all_emps:
+        user_roles = set(e.roles or [])
+        # 必须具备指定系统角色
+        if role.value not in user_roles:
+            continue
+        # 排除冲突角色（如 HR 运营排除专职 HRBP/ADMIN）
+        if exclude_set and bool(user_roles.intersection(exclude_set)):
+            continue
+
+        # 计算属性匹配权重
+        score = 0
+        if department_hint and e.department == department_hint:
+            score += 10
+        if position_keywords:
+            pos_lower = (e.position or "").lower()
+            for kw in position_keywords:
+                if kw.lower() in pos_lower:
+                    score += 5
+        matched_candidates.append((score, e))
+
+    if not matched_candidates:
+        return None
+
+    # 按匹配得分降序排序，返回最佳匹配实体
+    matched_candidates.sort(key=lambda item: item[0], reverse=True)
+    return matched_candidates[0][1]
+
+
+def resolve_ticket_assignee(
+    employee_id: str,
+    category: str,
+    title: str = "",
+    description: str = ""
+) -> str:
+    """
+    根据业界最佳实践（Ulrich HR三级交付模型与基于角色的动态路由引擎）智能分派工单负责人：
+    完全杜绝代码中硬编码任何自然人姓名（Zero-Hardcoding Policy）：
+    1. Tier 3 (战略伙伴与业务伙伴 HRBP)：
+       - 场景：转岗调动、流程撤销/作废、组织调整、员工关怀、申诉与仲裁
+       - 路由：动态穿透提单员工部门与汇报链，匹配专属 HRBP；无专属人员时降级至企业级 HRBP 服务台
+    2. Tier 2 (领域专家 COE & 财务复核专员)：
+       - 场景：薪酬工资、绩效奖金、报销复议、津贴核算、个税
+       - 路由：动态检索具备 FINANCE 角色且专职报销/薪酬的在职人员；无人员时降级至财务与薪酬服务组
+    3. Tier 1 (共享服务中心 HRSSC & 员工关系运营专员)：
+       - 场景：社保公积金、在职/收入证明、工卡门禁、落户政策与通用人事咨询
+       - 路由：动态检索具备 HR 角色且专职人事运营/员工关系的专员；无人员时降级至 HR 共享服务中心
+    """
+    text_corpus = f"{category} {title} {description}".lower()
+
+    # 1. 转岗调动、撤销申请、申诉与员工关怀 -> 动态解析对口 HRBP (Tier 3)
+    if any(k in text_corpus for k in ["转岗", "调动", "trf", "取消", "撤销", "撤回", "关怀", "申诉", "仲裁", "终止"]) or category in ("员工关怀与申诉", "转岗调动"):
+        hrbp = find_hrbp_for_employee(employee_id)
+        if hrbp:
+            return f"{hrbp.name} (对口 HRBP)"
+        return "HRBP业务伙伴团队 (HRBP Desk)"
+
+    # 2. 薪酬与报销/福利复核 -> 动态检索财务/薪酬专家 (Tier 2 / COE & Finance)
+    if any(k in text_corpus for k in ["薪酬", "工资", "奖金", "个税", "报销", "补贴", "津贴"]) or category == "薪酬福利":
+        fin_spec = find_specialist_by_role(
+            role=SystemRole.FINANCE,
+            department_hint="财务部",
+            position_keywords=["报销", "薪酬", "财务"]
+        )
+        if fin_spec:
+            return f"{fin_spec.name} ({fin_spec.position})"
+        return "财务与薪酬服务组 (Finance & Payroll Desk)"
+
+    # 3. 社保公积金、证明开具、行政工卡与综合咨询 -> 动态检索 HRSSC 运营/员工关系专员 (Tier 1)
+    hr_spec = find_specialist_by_role(
+        role=SystemRole.HR,
+        department_hint="人力资源部",
+        position_keywords=["员工关系", "人事", "专员", "运营", "服务"],
+        exclude_roles=[SystemRole.HRBP.value]
+    )
+    if hr_spec:
+        return f"{hr_spec.name} ({hr_spec.position})"
+
+    return "HR共享服务中心 (HRSSC Desk)"
+
+
 def create_hr_ticket(
     ticket_id: str,
     employee_id: str,
@@ -1270,7 +1475,17 @@ def create_hr_ticket(
     external_system_id: Optional[str] = None,
     assigned_to: Optional[str] = None
 ) -> Dict[str, Any]:
-    """创建 HR 工单"""
+    """创建 HR 工单（支持基于业界最佳实践的智能自动派单）"""
+    # 若调用方未显式指定 assigned_to，则应用业界最佳实践智能分派引擎自动路由责任人
+    effective_assignee = (assigned_to or "").strip()
+    if not effective_assignee:
+        effective_assignee = resolve_ticket_assignee(
+            employee_id=employee_id,
+            category=category,
+            title=title,
+            description=description
+        )
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -1278,9 +1493,9 @@ def create_hr_ticket(
                     """
                     INSERT INTO hr_tickets (id, employee_id, applicant, category, title, description, priority, status, assigned_to, external_system_id)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, 'open', %s, %s)
-                    RETURNING id, category, title, priority, status, applicant, external_system_id;
+                    RETURNING id, category, title, priority, status, applicant, assigned_to, external_system_id, created_at;
                     """,
-                    (ticket_id, employee_id, applicant, category, title, description, priority, assigned_to, external_system_id)
+                    (ticket_id, employee_id, applicant, category, title, description, priority, effective_assignee, external_system_id)
                 )
                 res = cur.fetchone()
                 conn.commit()
@@ -1295,7 +1510,7 @@ def create_hr_ticket(
             "description": description,
             "priority": priority,
             "status": "open",
-            "assigned_to": assigned_to or "HR 服务专员",
+            "assigned_to": effective_assignee,
             "external_system_id": external_system_id,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -1806,24 +2021,23 @@ def query_org_chart(
         if e.department == target_emp.department and e.id != target_emp.id
     ]
 
-    # 4. 查找对口 HRBP
+    # 4. 动态查找对口 HRBP (基于组织关系与角色自适应解析)
+    hrbp_emp = find_hrbp_for_employee(target_emp.id)
     hrbp_info = None
-    for e in all_emps:
-        if "hrbp" in e.position.lower() or "hrbp" in e.level.lower() or e.name == "王芳":
-            hrbp_info = {
-                "id": e.id,
-                "name": e.name,
-                "position": e.position,
-                "department": e.department,
-                "location": e.location,
-            }
-            break
+    if hrbp_emp:
+        hrbp_info = {
+            "id": hrbp_emp.id,
+            "name": hrbp_emp.name,
+            "position": hrbp_emp.position,
+            "department": hrbp_emp.department,
+            "location": hrbp_emp.location,
+        }
 
     # 5. 生成结构化简述
     mgr_str = target_emp.manager or "无 (公司最高管理层)"
     reps_str = ", ".join([r["name"] for r in direct_reports]) if direct_reports else "暂无直接下属"
     peers_str = ", ".join([m["name"] for m in team_members[:3]]) if team_members else "暂无其他同组同事"
-    hrbp_str = f"{hrbp_info['name']} ({hrbp_info['position']})" if hrbp_info else "王芳 (HRBP)"
+    hrbp_str = f"{hrbp_info['name']} ({hrbp_info['position']})" if hrbp_info else "HRBP 服务组"
 
     summary = (
         f"【{target_emp.name}】隶属于【{target_emp.department}】，职级职位为 {target_emp.position} ({target_emp.level})，常驻 {target_emp.location}。"

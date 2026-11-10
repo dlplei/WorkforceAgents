@@ -128,7 +128,8 @@ class IHRServiceAdapter(ABC):
         category: str,
         title: str,
         description: str,
-        priority: str = "medium"
+        priority: str = "medium",
+        assigned_to: Optional[str] = None
     ) -> Dict[str, Any]:
         """提交 HR 服务工单"""
         pass
@@ -309,7 +310,8 @@ class LocalPostgresAdapter(IHRServiceAdapter):
         category: str,
         title: str,
         description: str,
-        priority: str = "medium"
+        priority: str = "medium",
+        assigned_to: Optional[str] = None
     ) -> Dict[str, Any]:
         ticket_id = f"TICK-{datetime.date.today().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
         return database.create_hr_ticket(
@@ -319,7 +321,8 @@ class LocalPostgresAdapter(IHRServiceAdapter):
             category=category,
             title=title,
             description=description,
-            priority=priority
+            priority=priority,
+            assigned_to=assigned_to
         )
 
     def get_tickets(self, employee_id: str, ticket_id: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -459,7 +462,8 @@ class ServiceNowAdapter(IHRServiceAdapter):
         category: str,
         title: str,
         description: str,
-        priority: str = "medium"
+        priority: str = "medium",
+        assigned_to: Optional[str] = None
     ) -> Dict[str, Any]:
         external_id = None
         # 如果配置了 ServiceNow 实例且有密码，尝试调用 ServiceNow Table API
@@ -496,7 +500,8 @@ class ServiceNowAdapter(IHRServiceAdapter):
             title=title,
             description=description,
             priority=priority,
-            external_system_id=external_id
+            external_system_id=external_id,
+            assigned_to=assigned_to
         )
 
     def get_tickets(self, employee_id: str, ticket_id: Optional[str] = None) -> List[Dict[str, Any]]:

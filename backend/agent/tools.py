@@ -581,6 +581,7 @@ async def handle_create_hr_ticket(params: dict) -> dict:
     title = params.get("title", "")
     description = params.get("description", "")
     priority = params.get("priority", "medium")
+    assigned_to = params.get("assigned_to")
 
     ticket = adapter.create_ticket(
         employee_id=emp["id"],
@@ -588,8 +589,10 @@ async def handle_create_hr_ticket(params: dict) -> dict:
         category=category,
         title=title,
         description=description,
-        priority=priority
+        priority=priority,
+        assigned_to=assigned_to
     )
+    actual_assignee = ticket.get("assigned_to") or "HR服务专员"
     ext_sync = f"（已同步外部工单: {ticket.get('external_system_id')}）" if ticket.get("external_system_id") else ""
     return {
         "success": True,
@@ -600,7 +603,8 @@ async def handle_create_hr_ticket(params: dict) -> dict:
             "priority": priority,
             "status": "open",
             "applicant": emp["name"],
-            "message": f"HR服务工单创建成功{ext_sync}，HR服务专员将在1个工作日内处理并联系您",
+            "assigned_to": actual_assignee,
+            "message": f"HR服务工单创建成功{ext_sync}，已指派给【{actual_assignee}】处理，专员将在1个工作日内跟进联系",
             "external_id": ticket.get("external_system_id")
         }
     }
@@ -608,14 +612,14 @@ async def handle_create_hr_ticket(params: dict) -> dict:
 
 registry.register(
     name="create_hr_ticket",
-    description="创建 HR 服务工单（如社保公积金跨城转移、薪酬福利核算复议、考勤打卡申诉、员工关怀与维权、工卡门禁补办等），支持持久化及同步至 ServiceNow。",
+    description="创建 HR 服务工单（如社保公积金跨城转移、薪酬福利核算复议、转岗撤销与调动终止协助、考勤打卡申诉、员工关怀与维权、工卡门禁补办等），支持智能自动派发负责人及同步至 ServiceNow。",
     parameters={
         "type": "object",
         "properties": {
             "category": {
                 "type": "string",
                 "description": "工单分类",
-                "enum": ["社保公积金", "薪酬福利", "证明开具", "行政工卡", "综合咨询", "员工关怀与申诉"]
+                "enum": ["社保公积金", "薪酬福利", "证明开具", "行政工卡", "综合咨询", "员工关怀与申诉", "转岗调动"]
             },
             "title": {"type": "string", "description": "工单简短标题"},
             "description": {"type": "string", "description": "工单详细诉求与说明"},
@@ -624,6 +628,10 @@ registry.register(
                 "description": "优先级",
                 "enum": ["low", "medium", "high", "urgent"]
             },
+            "assigned_to": {
+                "type": "string",
+                "description": "指定处理人（可选；若留空，系统将遵循业界最佳实践自动路由：转岗撤销/组织异动直派对口 HRBP，公积金/薪酬直派专项专员）"
+            }
         },
         "required": ["category", "title", "description"],
     },
@@ -890,7 +898,17 @@ async def handle_submit_transfer_request(params: dict) -> dict:
         pass
 
     is_cross_city = (target_loc != cur_loc)
-    approver = f"{emp_manager} (转出主管) / 王芳 (HRBP)"
+    # 动态检索对口 HRBP（完全避免业务代码硬编码自然人姓名）
+    hrbp_label = "对口 HRBP"
+    try:
+        from db.database import find_hrbp_for_employee
+        hrbp_prof = find_hrbp_for_employee(emp_id)
+        if hrbp_prof and hrbp_prof.name:
+            hrbp_label = f"{hrbp_prof.name} (HRBP)"
+    except Exception:
+        pass
+
+    approver = f"{emp_manager} (转出主管) / {hrbp_label}"
     if is_cross_city:
         approver += " / 薪酬委员会"
 
@@ -1152,6 +1170,9 @@ def build_hitl_action_request(
         priority = arguments.get("priority", "medium")
         priority_labels = {"low": "普通", "medium": "中等", "high": "高优先", "urgent": "紧急 (2小时内响应)"}
         desc = arguments.get("description", "")
+        # 根据业界最佳实践提前解析分派责任人用于 HITL 卡片透视
+        from db.database import resolve_ticket_assignee
+        assignee = arguments.get("assigned_to") or resolve_ticket_assignee(emp_id, cat, title, desc)
 
         return HitlActionRequest(
             action_id=action_id,
@@ -1165,7 +1186,8 @@ def build_hitl_action_request(
                 "工单标题": title,
                 "紧急程度": priority_labels.get(priority, priority),
                 "诉求说明": desc,
-                "流转目标": "HR 共享服务中心 (SSC) / ServiceNow",
+                "指派责任人": assignee,
+                "流转协同": f"{assignee} (负责介入跟进与闭环)",
             },
             raw_arguments=arguments,
             status="pending",
@@ -1231,6 +1253,16 @@ def build_hitl_action_request(
         is_cross = (target_loc != cur_loc and target_loc != "未指定")
         policy_notice = "跨城异地调动：享有最高2万元搬迁补贴与首月房补；社保公积金次月转移至新城市" if is_cross else "同城部门调动：社保公积金与基本薪资标准平移"
 
+        # 动态检索对口 HRBP 用于会签提示
+        hrbp_sign_label = "对口 HRBP 会签"
+        try:
+            from db.database import find_hrbp_for_employee
+            hrbp_prof = find_hrbp_for_employee(emp_id)
+            if hrbp_prof and hrbp_prof.name:
+                hrbp_sign_label = f"HRBP {hrbp_prof.name} 会签"
+        except Exception:
+            pass
+
         return HitlActionRequest(
             action_id=action_id,
             tool_name=tool_name,
@@ -1245,7 +1277,7 @@ def build_hitl_action_request(
                 "调动事由": reason,
                 "政策合规预检": "司龄已满1年，符合《POL-004 员工调动管理办法》申请资格",
                 "福利与人事须知": policy_notice,
-                "审批协同流转": f"转出主管【{emp_mgr}】 + 目标部门总监 + HRBP 王芳会签",
+                "审批协同流转": f"转出主管【{emp_mgr}】 + 目标部门总监 + {hrbp_sign_label}",
             },
             raw_arguments=arguments,
             status="pending",

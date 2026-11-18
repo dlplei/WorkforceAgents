@@ -700,6 +700,10 @@ async def handle_review_approval_request(params: dict) -> dict:
                 trf_matched = [p for p in matched if "调动" in (p.get("approval_type") or "") or str(p.get("id", "")).startswith("TRF-")]
                 if trf_matched:
                     matched = trf_matched
+            elif any(k in comment_text for k in ["工单", "ticket", "撤销", "作废", "取消"]) or (target_type and any(k in target_type for k in ["工单", "ticket", "撤销"])):
+                ticket_matched = [p for p in matched if str(p.get("id", "")).startswith("TICK-") or str(p.get("id", "")).startswith("TCK-") or "工单" in str(p.get("type", ""))]
+                if ticket_matched:
+                    matched = ticket_matched
             if matched:
                 approval_id = matched[0].get("id")
         elif len(pending) == 1:
@@ -735,13 +739,13 @@ async def handle_review_approval_request(params: dict) -> dict:
 
 registry.register(
     name="review_approval_request",
-    description="主管或审批人对员工提交的待办单据进行审核判定（通过或驳回）。审批通过会自动扣减申请人假期余额并更新日历日程。",
+    description="主管、HRBP 或财务对员工提交的待办单据（含请假、差旅、报销、转岗调动及 HR 服务工单）进行审核判定或办结处理。若为撤销类工单办结通过，会自动联动撤销作废关联业务单据。",
     parameters={
         "type": "object",
         "properties": {
             "approval_id": {
                 "type": "string",
-                "description": "待审批单号，例如 'APR-001'。若不确定可通过 query_pending_approvals 先行查询",
+                "description": "待审批单号或工单号，例如 'APR-001' 或 'TICK-xxx'。若不确定可通过 query_pending_approvals 先行查询",
             },
             "decision": {
                 "type": "string",

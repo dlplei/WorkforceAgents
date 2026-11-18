@@ -133,6 +133,7 @@ export interface ApprovalItem {
   type?: string;
   approval_type?: string;
   status: string;
+  ticket_status?: string;
   date?: string;
   request_date?: string;
   submitted_at?: string;
@@ -143,12 +144,18 @@ export interface ApprovalItem {
   comment?: string;
   action_date?: string;
   days?: number;
+  amount?: number;
+  priority?: string;
+  is_ticket?: boolean;
+  ticket_category?: string;
+  external_system_id?: string;
   details?: {
     leave_type?: string;
     start_date?: string;
     end_date?: string;
     days?: number;
     reason?: string;
+    amount?: number;
     [key: string]: any;
   };
 }

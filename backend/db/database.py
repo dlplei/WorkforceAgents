@@ -3,6 +3,7 @@ PostgreSQL 数据库交互层
 封装员工、假期、日程、审批及工单的持久化存储
 """
 import os
+import re
 import json
 import random
 import decimal
@@ -222,6 +223,9 @@ def init_db() -> bool:
                             external_system_id VARCHAR(100)
                         );
                         ALTER TABLE hr_tickets ADD COLUMN IF NOT EXISTS assigned_to VARCHAR(100);
+                        ALTER TABLE hr_tickets ADD COLUMN IF NOT EXISTS comment TEXT;
+                        ALTER TABLE hr_tickets ADD COLUMN IF NOT EXISTS action_date VARCHAR(50);
+                        ALTER TABLE hr_tickets ADD COLUMN IF NOT EXISTS resolved_by VARCHAR(100);
                         """
                     )
                     conn.commit()
@@ -778,6 +782,36 @@ def query_approvals(
         cur_emp, requested_scope=scope, status=norm_status, applicant_name=applicant_name
     )
 
+    if request_id and (str(request_id).startswith("TICK-") or str(request_id).startswith("TCK-")):
+        tk_list = query_hr_tickets(ticket_id=request_id)
+        if not tk_list and employee_id:
+            tk_list = query_hr_tickets(employee_id=employee_id, ticket_id=request_id)
+        if tk_list:
+            t = tk_list[0]
+            st = t.get("status")
+            norm_st = "approved" if st in ("resolved", "已办结") else "rejected" if st in ("closed", "rejected", "已驳回") else "pending"
+            c_date = t.get("created_at")
+            d_str = c_date.strftime("%Y-%m-%d") if isinstance(c_date, (datetime, date)) else str(c_date)[:10] if c_date else ""
+            return sanitize_db_output([{
+                "id": t["id"],
+                "approval_id": t["id"],
+                "employee_id": t.get("employee_id"),
+                "type": f"服务工单: {t.get('category')}",
+                "approval_type": f"服务工单: {t.get('category')}",
+                "status": norm_st,
+                "applicant": t.get("applicant"),
+                "employee_name": t.get("applicant"),
+                "date": d_str,
+                "request_date": d_str,
+                "start_date": "",
+                "end_date": "",
+                "reason": f"【{t.get('title')}】 {t.get('description', '')}".strip(),
+                "approver": t.get("assigned_to"),
+                "comment": t.get("comment") or "",
+                "action_date": t.get("action_date") or "",
+                "is_ticket": True,
+            }])
+
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
@@ -931,6 +965,138 @@ def deduct_leave_balance(employee_id: str, leave_type: str = "annual", days: flo
     return {"annual": 5, "sick": 5, "personal": 2}
 
 
+def _query_pending_tickets_for_manager(
+    manager_name: str,
+    manager_name_or_id: str,
+    is_hrbp: bool,
+    is_finance: bool,
+    is_hr: bool
+) -> List[Dict[str, Any]]:
+    """查询指派给当前专员/主管的待办服务工单 (Unified Task Inbox)"""
+    tickets = []
+
+    # 提取系统中其他专员姓名，防止公共池越权穿透已指派给特定个人的工单
+    known_specialists = {emp.name for emp in MOCK_EMPLOYEES.values() if emp.name}
+    other_specialists = [name for name in known_specialists if name and name != manager_name]
+
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                where_clauses = ["status IN ('open', 'pending', '待处理', 'in_progress')"]
+
+                # 1. 个人直接指派优先 (Direct Assignee)
+                direct_conditions = ["assigned_to LIKE %s", "assigned_to = %s"]
+                params: List[Any] = [f"%{manager_name}%", manager_name_or_id]
+
+                # 2. 公共服务池/队列派单 (Queue Pool)，仅在未明确指定给其他具体专员时匹配
+                pool_conditions = []
+                if is_hrbp:
+                    pool_conditions.append("assigned_to LIKE %s")
+                    params.append("%HRBP%")
+                if is_finance:
+                    pool_conditions.extend(["assigned_to LIKE %s", "assigned_to LIKE %s"])
+                    params.extend(["%财务与薪酬%", "%Finance Desk%"])
+                if is_hr and not is_hrbp:
+                    # 基层 HRSSC / 员工关系专员（如刘洋）：只匹配 HRSSC/共享服务，且绝不匹配 HRBP
+                    pool_conditions.extend(["assigned_to LIKE %s", "assigned_to LIKE %s"])
+                    params.extend(["%HRSSC%", "%共享服务中心%"])
+
+                if pool_conditions and other_specialists:
+                    not_other_specialists_sql = " AND ".join(["assigned_to NOT LIKE %s" for _ in other_specialists])
+                    for s_name in other_specialists:
+                        params.append(f"%{s_name}%")
+
+                    if not is_hrbp:
+                        # 非 HRBP 严禁匹配 HRBP
+                        not_other_specialists_sql += " AND assigned_to NOT LIKE '%HRBP%'"
+
+                    pool_clause = f"(({' OR '.join(pool_conditions)}) AND {not_other_specialists_sql})"
+                    direct_clause = f"({' OR '.join(direct_conditions)})"
+                    where_clauses.append(f"({direct_clause} OR {pool_clause})")
+                else:
+                    where_clauses.append(f"({' OR '.join(direct_conditions)})")
+
+                sql = f"""
+                    SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id, comment, action_date
+                    FROM hr_tickets
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY created_at DESC;
+                """
+                cur.execute(sql, tuple(params))
+                rows = cur.fetchall()
+                if rows:
+                    for r in rows:
+                        row_dict = dict(r)
+                        c_date = row_dict.get("created_at")
+                        date_str = c_date.strftime("%Y-%m-%d") if isinstance(c_date, (datetime, date)) else str(c_date)[:10] if c_date else ""
+                        tickets.append({
+                            "id": row_dict["id"],
+                            "approval_id": row_dict["id"],
+                            "employee_id": row_dict["employee_id"],
+                            "type": f"服务工单: {row_dict.get('category', '日常事务')}",
+                            "approval_type": f"服务工单: {row_dict.get('category', '日常事务')}",
+                            "status": "pending",
+                            "applicant": row_dict.get("applicant") or "员工",
+                            "employee_name": row_dict.get("applicant") or "员工",
+                            "date": date_str,
+                            "request_date": date_str,
+                            "start_date": "",
+                            "end_date": "",
+                            "reason": f"【{row_dict.get('title', '')}】 {row_dict.get('description', '')}".strip(),
+                            "approver": row_dict.get("assigned_to") or "",
+                            "comment": row_dict.get("comment") or "",
+                            "action_date": row_dict.get("action_date") or "",
+                            "priority": row_dict.get("priority") or "medium",
+                            "is_ticket": True,
+                            "ticket_category": row_dict.get("category"),
+                            "external_system_id": row_dict.get("external_system_id") or "",
+                        })
+    except Exception:
+        pass
+
+    # 内存 fallback
+    for t in _in_memory_tickets:
+        if t.get("status") not in ("open", "pending", "待处理", "in_progress"):
+            continue
+        asg = t.get("assigned_to") or ""
+        matched = (manager_name in asg or manager_name_or_id in asg)
+        if not matched:
+            has_other = any(other_name in asg for other_name in other_specialists)
+            if not has_other:
+                if is_hrbp and "HRBP" in asg:
+                    matched = True
+                elif is_finance and ("财务与薪酬" in asg or "Finance Desk" in asg):
+                    matched = True
+                elif is_hr and not is_hrbp and ("HRSSC" in asg or "共享服务中心" in asg) and "HRBP" not in asg:
+                    matched = True
+        if matched and not any(x["id"] == t["id"] for x in tickets):
+            c_date = t.get("created_at", "")
+            date_str = str(c_date)[:10]
+            tickets.append({
+                "id": t["id"],
+                "approval_id": t["id"],
+                "employee_id": t.get("employee_id", DEFAULT_EMPLOYEE_ID),
+                "type": f"服务工单: {t.get('category', '日常事务')}",
+                "approval_type": f"服务工单: {t.get('category', '日常事务')}",
+                "status": "pending",
+                "applicant": t.get("applicant") or "员工",
+                "employee_name": t.get("applicant") or "员工",
+                "date": date_str,
+                "request_date": date_str,
+                "start_date": "",
+                "end_date": "",
+                "reason": f"【{t.get('title', '')}】 {t.get('description', '')}".strip(),
+                "approver": asg,
+                "comment": t.get("comment") or "",
+                "action_date": t.get("action_date") or "",
+                "priority": t.get("priority") or "medium",
+                "is_ticket": True,
+                "ticket_category": t.get("category"),
+                "external_system_id": t.get("external_system_id") or "",
+            })
+    return tickets
+
+
 def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[str, Any]]:
     """查询等待当前节点审批人处理的待办单据"""
     manager_name = manager_name_or_id
@@ -946,7 +1112,16 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
                 break
 
     is_finance = PermissionService.is_finance(emp) or "财务" in manager_name
-    is_hrbp = PermissionService.is_hrbp(emp) or "HRBP" in manager_name or "HR" in manager_name
+    is_hrbp = PermissionService.is_hrbp(emp) or "HRBP" in manager_name
+    is_hr = PermissionService.is_hr(emp)
+
+    pending_tickets = _query_pending_tickets_for_manager(
+        manager_name=manager_name,
+        manager_name_or_id=manager_name_or_id,
+        is_hrbp=is_hrbp,
+        is_finance=is_finance,
+        is_hr=is_hr
+    )
 
     try:
         with get_db_connection() as conn:
@@ -1001,7 +1176,10 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
                     )
                 rows = cur.fetchall()
                 if rows is not None:
-                    return sanitize_db_output([dict(r) for r in rows])
+                    db_approvals = [dict(r) for r in rows]
+                    combined = db_approvals + pending_tickets
+                    combined.sort(key=lambda x: str(x.get("request_date") or x.get("date") or ""), reverse=True)
+                    return sanitize_db_output(combined)
     except Exception:
         pass
 
@@ -1039,7 +1217,12 @@ def query_pending_approvals_for_manager(manager_name_or_id: str) -> List[Dict[st
                 and ("主管" not in (a.get("approver") or "") and "李伟" not in (a.get("approver") or "") or "转出主管" in (a.get("comment") or ""))
             )
         ]
-    return sanitize_db_output(results)
+    combined_mem = list(results)
+    for pt in pending_tickets:
+        if not any(x.get("id") == pt["id"] for x in combined_mem):
+            combined_mem.append(pt)
+    combined_mem.sort(key=lambda x: str(x.get("request_date") or x.get("date") or ""), reverse=True)
+    return sanitize_db_output(combined_mem)
 
 def update_approval_status(
     approval_id: str,
@@ -1058,6 +1241,113 @@ def update_approval_status(
             manager_name = emp.name
 
     norm_decision = "approved" if str(decision).lower() in ("approved", "agree", "pass", "通过", "同意", "批准") else "rejected"
+    # 0. 优先判断是否为 HR 服务工单 (TICK- / TCK-)
+    if str(approval_id).startswith("TICK-") or str(approval_id).startswith("TCK-"):
+        ticket_found = None
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT * FROM hr_tickets WHERE id = %s;", (approval_id,))
+                    r = cur.fetchone()
+                    if r:
+                        ticket_found = sanitize_db_output(dict(r))
+        except Exception:
+            pass
+        if not ticket_found:
+            for t in _in_memory_tickets:
+                if t.get("id") == approval_id:
+                    ticket_found = dict(t)
+                    break
+
+        if not ticket_found:
+            return sanitize_db_output({
+                "success": False,
+                "approval": {},
+                "leave_balance_deducted": None,
+                "message": f"未找到服务工单 {approval_id}"
+            })
+
+        action_today = datetime.now().strftime("%Y-%m-%d")
+        new_status = "resolved" if norm_decision == "approved" else "rejected"
+        final_comment = comment or ("工单已核准办结" if norm_decision == "approved" else "工单已驳回关闭")
+
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE hr_tickets
+                        SET status = %s, comment = %s, action_date = %s, resolved_by = %s
+                        WHERE id = %s
+                        RETURNING *;
+                        """,
+                        (new_status, final_comment, action_today, manager_name, approval_id)
+                    )
+                    conn.commit()
+        except Exception:
+            pass
+
+        for t in _in_memory_tickets:
+            if t.get("id") == approval_id:
+                t["status"] = new_status
+                t["comment"] = final_comment
+                t["action_date"] = action_today
+                t["resolved_by"] = manager_name
+
+        # 智能业务联动：识别工单撤销/作废意图并联动更新审批单状态
+        auto_cancel_msg = ""
+        combined_text = f"{ticket_found.get('title', '')} {ticket_found.get('description', '')} {ticket_found.get('external_system_id', '')}"
+        is_cancel_intent = any(k in combined_text for k in ["撤销", "作废", "取消", "撤回", "终止"])
+        matched_approval_ids = re.findall(r"(TRF-\d+|LEV-\d+|EXP-\d+|APR-\d+)", combined_text)
+
+        if is_cancel_intent and matched_approval_ids and norm_decision == "approved":
+            for rel_id in set(matched_approval_ids):
+                cancel_note = f"已由责任人 {manager_name} 经工单 {approval_id} 办结作废撤销 ({action_today})"
+                try:
+                    with get_db_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """
+                                UPDATE approvals
+                                SET status = 'cancelled',
+                                    comment = CASE WHEN comment IS NULL OR comment = '' THEN %s ELSE comment || '；' || %s END,
+                                    action_date = %s
+                                WHERE id = %s;
+                                """,
+                                (cancel_note, cancel_note, action_today, rel_id)
+                            )
+                            conn.commit()
+                except Exception:
+                    pass
+                for m_a in _in_memory_approvals:
+                    if m_a.get("id") == rel_id:
+                        m_a["status"] = "cancelled"
+                        curr_c = m_a.get("comment") or ""
+                        m_a["comment"] = f"{curr_c}；{cancel_note}" if curr_c else cancel_note
+                        m_a["action_date"] = action_today
+                auto_cancel_msg += f"，关联单据 {rel_id} 已同步联动标记为【已作废/已撤销】"
+
+        res_msg = f"服务工单 {approval_id} 处理完成（状态: {new_status}）{auto_cancel_msg}"
+        return sanitize_db_output({
+            "success": True,
+            "approval": {
+                "id": approval_id,
+                "approval_id": approval_id,
+                "employee_id": ticket_found.get("employee_id"),
+                "status": "approved" if norm_decision == "approved" else "rejected",
+                "ticket_status": new_status,
+                "type": f"服务工单: {ticket_found.get('category')}",
+                "approval_type": f"服务工单: {ticket_found.get('category')}",
+                "comment": final_comment,
+                "action_date": action_today,
+                "approver": manager_name,
+                "applicant": ticket_found.get("applicant"),
+                "reason": ticket_found.get("description"),
+            },
+            "leave_balance_deducted": None,
+            "message": res_msg
+        })
+
     
     target = None
     target_idx = -1
@@ -1499,7 +1789,22 @@ def create_hr_ticket(
                 )
                 res = cur.fetchone()
                 conn.commit()
-                return sanitize_db_output(dict(res))
+                res_dict = sanitize_db_output(dict(res))
+                if not any(t.get("id") == ticket_id for t in _in_memory_tickets):
+                    _in_memory_tickets.append({
+                        "id": ticket_id,
+                        "employee_id": employee_id,
+                        "applicant": applicant,
+                        "category": category,
+                        "title": title,
+                        "description": description,
+                        "priority": priority,
+                        "status": "open",
+                        "assigned_to": effective_assignee,
+                        "external_system_id": external_system_id,
+                        "created_at": str(res_dict.get("created_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                    })
+                return res_dict
     except Exception:
         item = {
             "id": ticket_id,
@@ -1518,34 +1823,35 @@ def create_hr_ticket(
         return item
 
 
-def query_hr_tickets(employee_id: str = DEFAULT_EMPLOYEE_ID, ticket_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def query_hr_tickets(employee_id: Optional[str] = None, ticket_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """查询 HR 工单"""
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cur:
+                where_clauses = []
+                params = []
                 if ticket_id:
-                    cur.execute(
-                        """
-                        SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id
-                        FROM hr_tickets
-                        WHERE id = %s AND employee_id = %s;
-                        """,
-                        (ticket_id, employee_id)
-                    )
-                else:
-                    cur.execute(
-                        """
-                        SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id
-                        FROM hr_tickets
-                        WHERE employee_id = %s
-                        ORDER BY created_at DESC;
-                        """,
-                        (employee_id,)
-                    )
+                    where_clauses.append("id = %s")
+                    params.append(ticket_id)
+                if employee_id:
+                    where_clauses.append("employee_id = %s")
+                    params.append(employee_id)
+                where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+                cur.execute(
+                    f"""
+                    SELECT id, employee_id, applicant, category, title, description, priority, status, assigned_to, created_at, external_system_id, comment, action_date, resolved_by
+                    FROM hr_tickets
+                    {where_sql}
+                    ORDER BY created_at DESC;
+                    """,
+                    tuple(params)
+                )
                 rows = cur.fetchall()
                 return sanitize_db_output([dict(r) for r in rows])
     except Exception:
-        results = [t for t in _in_memory_tickets if t.get("employee_id") == employee_id]
+        results = list(_in_memory_tickets)
+        if employee_id:
+            results = [t for t in results if t.get("employee_id") == employee_id]
         if ticket_id:
             results = [t for t in results if t.get("id") == ticket_id]
         return sanitize_db_output(results)

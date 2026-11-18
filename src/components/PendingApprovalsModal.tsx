@@ -17,11 +17,21 @@ interface BadgeConfig {
   badgeText: string;
   badgeClass: string;
   typeLabel: string;
-  category: 'leave' | 'travel' | 'transfer' | 'expense' | 'document' | 'other';
+  category: 'leave' | 'travel' | 'transfer' | 'expense' | 'document' | 'ticket' | 'other';
 }
 
 function getApprovalBadgeConfig(rawType: string = ''): BadgeConfig {
   const t = rawType.toLowerCase();
+
+  // 0. HR 服务工单
+  if (t.includes('工单') || t.includes('ticket') || t.startsWith('tick-') || t.startsWith('tck-')) {
+    return {
+      badgeText: '服务工单',
+      badgeClass: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40',
+      typeLabel: rawType.replace(/^服务工单:\s*/, '') || '服务工单',
+      category: 'ticket',
+    };
+  }
 
   // 1. 转岗调动
   if (t.includes('调动') || t.includes('转岗') || t === 'transfer') {
@@ -448,10 +458,12 @@ export default function PendingApprovalsModal({
                     </div>
                     <div className="col-span-2 flex items-center space-x-1.5 text-slate-300">
                       <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>{badgeInfo.category === 'transfer' ? '生效日期: ' : '时间周期: '}</span>
+                      <span>{badgeInfo.category === 'transfer' ? '生效日期: ' : badgeInfo.category === 'ticket' ? '受理责任: ' : '时间周期: '}</span>
                       <span className="font-mono text-slate-200">
                         {badgeInfo.category === 'transfer'
                           ? (startDate || item.details?.effective_date || '即日生效')
+                          : badgeInfo.category === 'ticket'
+                          ? (item.approver || '对口服务团队')
                           : `${startDate || '待定'} ~ ${endDate || '待定'}`}
                       </span>
                     </div>
@@ -494,7 +506,7 @@ export default function PendingApprovalsModal({
                     <div className="pt-2 border-t border-slate-800 flex flex-col sm:flex-row items-center gap-2">
                       <input
                         type="text"
-                        placeholder="审批批注 (选填，例如：按时交接工作即可)"
+                        placeholder={badgeInfo.category === 'ticket' ? "处理批注与跟进记录 (选填，如：核准并联动撤销)" : "审批批注 (选填，例如：按时交接工作即可)"}
                         value={comments[approvalId] || ''}
                         onChange={(e) => setComments((prev) => ({ ...prev, [approvalId]: e.target.value }))}
                         disabled={Boolean(processingId)}
@@ -508,7 +520,7 @@ export default function PendingApprovalsModal({
                           className="flex-1 sm:flex-initial flex items-center justify-center space-x-1 px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                         >
                           {isBusy && !comments[approvalId] ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <XCircle className="w-3.5 h-3.5 mr-1" />}
-                          <span>{isBusy ? '处理中...' : '驳回'}</span>
+                          <span>{isBusy ? '处理中...' : (badgeInfo.category === 'ticket' ? '驳回关闭' : '驳回')}</span>
                         </button>
                         <button
                           type="button"
@@ -517,7 +529,7 @@ export default function PendingApprovalsModal({
                           className="flex-1 sm:flex-initial flex items-center justify-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow-sm"
                         >
                           {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <CheckCircle className="w-3.5 h-3.5 mr-1" />}
-                          <span>{isBusy ? '处理中...' : '批准同意'}</span>
+                          <span>{isBusy ? '处理中...' : (badgeInfo.category === 'ticket' ? '办结完成' : '批准同意')}</span>
                         </button>
                       </div>
                     </div>
